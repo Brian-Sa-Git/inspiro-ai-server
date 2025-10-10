@@ -8,10 +8,12 @@ app.use(bodyParser.json());
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
+// --- 測試 API ---
 app.get("/", (req, res) => {
   res.send("🚀 Inspiro AI 伺服器正在運行中！");
 });
 
+// --- 主要聊天 API ---
 app.post("/api/generate", async (req, res) => {
   try {
     const { message } = req.body;
@@ -22,8 +24,9 @@ app.post("/api/generate", async (req, res) => {
       });
     }
 
+    // 🔥 修正這行：改成 v1beta
     const MODEL = "gemini-1.5-flash";
-    const url = `https://generativelanguage.googleapis.com/v1/models/${MODEL}:generateContent?key=${GEMINI_API_KEY}`;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${GEMINI_API_KEY}`;
 
     const payload = {
       contents: [
