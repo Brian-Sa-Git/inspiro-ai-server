@@ -8,12 +8,15 @@ app.use(bodyParser.json());
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
+// 🌟 可自訂模型（gemini-1.5-flash / gemini-1.5-pro / gemini-2.0-flash-exp）
+const MODEL = process.env.GEMINI_MODEL || "gemini-2.0-flash-exp"; 
+
 // --- 測試 API ---
 app.get("/", (req, res) => {
-  res.send("🚀 Inspiro AI 伺服器正在運行中！");
+  res.send(`🚀 Inspiro AI 伺服器已啟動。使用模型：${MODEL}`);
 });
 
-// --- 主要聊天 API ---
+// --- 聊天 API ---
 app.post("/api/generate", async (req, res) => {
   try {
     const { message } = req.body;
@@ -24,9 +27,11 @@ app.post("/api/generate", async (req, res) => {
       });
     }
 
-    // 🔥 修正這行：改成 v1beta
-    const MODEL = "gemini-1.5-flash";
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${GEMINI_API_KEY}`;
+    // 🔥 自動偵測正確 API 版本（2.0 系列需用 v1beta）
+    const isV2 = MODEL.startsWith("gemini-2");
+    const apiVersion = isV2 ? "v1beta" : "v1beta"; // 目前 1.5 / 2.0 都使用 v1beta
+
+    const url = `https://generativelanguage.googleapis.com/${apiVersion}/models/${MODEL}:generateContent?key=${GEMINI_API_KEY}`;
 
     const payload = {
       contents: [
@@ -46,7 +51,7 @@ app.post("/api/generate", async (req, res) => {
     const data = await r.json();
 
     if (!r.ok) {
-      console.error("Inspiro AI 上游錯誤：", r.status, data);
+      console.error("❌ Inspiro AI 上游錯誤：", r.status, data);
       return res.status(500).json({
         reply: "⚠️ Inspiro AI 發生暫時錯誤，請稍後再試。",
       });
@@ -54,11 +59,11 @@ app.post("/api/generate", async (req, res) => {
 
     const aiText =
       data?.candidates?.[0]?.content?.parts?.[0]?.text ||
-      "Inspiro AI 暫時沒有內容可回覆。";
+      "🤖 Inspiro AI 暫時沒有回覆內容。";
 
     return res.json({ reply: aiText });
   } catch (err) {
-    console.error("Inspiro AI 伺服器錯誤：", err);
+    console.error("💥 Inspiro AI 伺服器錯誤：", err);
     return res.status(500).json({
       reply: "⚠️ Inspiro AI 發生暫時錯誤，請稍後再試。",
     });
