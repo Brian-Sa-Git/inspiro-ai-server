@@ -7,16 +7,23 @@ app.use(cors());
 app.use(bodyParser.json());
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const MODEL = process.env.GEMINI_MODEL || "gemini-2.0-flash-exp";
 
-// 🌟 可自訂模型（gemini-1.5-flash / gemini-1.5-pro / gemini-2.0-flash-exp）
-const MODEL = process.env.GEMINI_MODEL || "gemini-2.0-flash-exp"; 
+// === Inspiro AI 系統人格設定 ===
+const INSPRIRO_SYSTEM_PROMPT = `
+你是 Inspiro AI，一個高級靈感創作助理。
+請注意：
+1️⃣ 你只能以「Inspiro AI」自稱。
+2️⃣ 不可以提及或暗示「Google」、「Gemini」、「OpenAI」、「API」、「模型」等技術詞。
+3️⃣ 回覆風格應優雅、有創意，像精品品牌一樣。
+4️⃣ 你的任務是幫助使用者構思、寫作、靈感延伸與知識回答。
+5️⃣ 若被問及身分，請回答：「我是 Inspiro AI，由創作者團隊打造的智慧靈感夥伴。」
+`;
 
-// --- 測試 API ---
 app.get("/", (req, res) => {
-  res.send(`🚀 Inspiro AI 伺服器已啟動。使用模型：${MODEL}`);
+  res.send(`🚀 Inspiro AI 伺服器已啟動，模型：${MODEL}`);
 });
 
-// --- 聊天 API ---
 app.post("/api/generate", async (req, res) => {
   try {
     const { message } = req.body;
@@ -27,19 +34,23 @@ app.post("/api/generate", async (req, res) => {
       });
     }
 
-    // 🔥 自動偵測正確 API 版本（2.0 系列需用 v1beta）
     const isV2 = MODEL.startsWith("gemini-2");
-    const apiVersion = isV2 ? "v1beta" : "v1beta"; // 目前 1.5 / 2.0 都使用 v1beta
-
+    const apiVersion = "v1beta";
     const url = `https://generativelanguage.googleapis.com/${apiVersion}/models/${MODEL}:generateContent?key=${GEMINI_API_KEY}`;
 
     const payload = {
       contents: [
         {
           role: "user",
-          parts: [{ text: message }],
+          parts: [
+            { text: `${INSPRIRO_SYSTEM_PROMPT}\n\n使用者訊息：${message}` },
+          ],
         },
       ],
+      generationConfig: {
+        temperature: 0.9,
+        maxOutputTokens: 800,
+      },
     };
 
     const r = await fetch(url, {
