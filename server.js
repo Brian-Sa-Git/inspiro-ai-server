@@ -37,7 +37,7 @@ app.use(bodyParser.json());
 
 /* === API 金鑰與模型設定 === */
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const MODEL = process.env.GEMINI_MODEL || "gemini-1.5-flash"; // ✅ 可改 gemini-2.0-flash-exp
+const MODEL = process.env.GEMINI_MODEL || "gemini-2.0-flash"; // ✅ 可改 gemini-2.0-flash-exp
 
 /* === Inspiro AI 系統人格設定 === */
 const INSPRIRO_SYSTEM_PROMPT = `
