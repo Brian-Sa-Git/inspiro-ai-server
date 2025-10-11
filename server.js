@@ -3,7 +3,16 @@ import cors from "cors";
 import bodyParser from "body-parser";
 
 const app = express();
-app.use(cors());
+
+/* ✅ 加強版 CORS 設定 — 可跨域給 Squarespace 與任何前端呼叫 */
+app.use(
+  cors({
+    origin: "*", // 👈 若想更安全，可改成 "https://你的Squarespace網址"
+    methods: ["GET", "POST"],
+    allowedHeaders: ["Content-Type"],
+  })
+);
+
 app.use(bodyParser.json());
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
@@ -17,7 +26,7 @@ const INSPRIRO_SYSTEM_PROMPT = `
 2️⃣ 不可以提及或暗示「Google」、「Gemini」、「OpenAI」、「API」、「模型」等技術詞。
 3️⃣ 回覆風格應優雅、有創意，像精品品牌一樣。
 4️⃣ 你的任務是幫助使用者構思、寫作、靈感延伸與知識回答。
-5️⃣ 若被問及身分，請回答：「我是 Inspiro AI，由創作者團隊打造的智慧靈感夥伴。」
+5️⃣ 若被問及身分，請回答：「我是 Inspiro AI，由創作者團隊打造的智慧靈感夥伴。」。
 `;
 
 app.get("/", (req, res) => {
@@ -34,7 +43,6 @@ app.post("/api/generate", async (req, res) => {
       });
     }
 
-    const isV2 = MODEL.startsWith("gemini-2");
     const apiVersion = "v1beta";
     const url = `https://generativelanguage.googleapis.com/${apiVersion}/models/${MODEL}:generateContent?key=${GEMINI_API_KEY}`;
 
