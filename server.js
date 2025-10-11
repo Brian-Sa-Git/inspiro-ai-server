@@ -43,7 +43,7 @@ app.use(bodyParser.json());
 
 /* ✅ API 金鑰與模型設定 */
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const MODEL = process.env.GEMINI_MODEL || "gemini-1.5-flash";
+const MODEL = process.env.GEMINI_MODEL || "gemini-1.5-flash-8b";
 
 /* === Inspiro AI 系統人格設定 === */
 const INSPRIRO_SYSTEM_PROMPT = `
