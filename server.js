@@ -134,16 +134,28 @@ app.post("/api/generate", async (req, res) => {
   }
 });
 
-/* === 啟動伺服器 === */
-const PORT = process.env.PORT || 8080;
-app.listen(PORT, () =>
-  console.log(`✅ Inspiro AI server running on port ${PORT}`)
-);
-app.listen(PORT, () =>
-  console.log(`✅ Inspiro AI server running on port ${PORT}`)
-);
 
-// 💓 防止 Railway 停止容器（保活機制）
+/* === 啟動伺服器（含自動重啟修復）=== */
+const PORT = process.env.PORT || 8080;
+
+function startServer(port) {
+  app
+    .listen(port, () => {
+      console.log(`✅ Inspiro AI server running on port ${port}`);
+    })
+    .on("error", (err) => {
+      if (err.code === "EADDRINUSE") {
+        console.warn(`⚠️ Port ${port} 已被佔用，嘗試使用新埠 ${port + 1}...`);
+        startServer(port + 1); // ⚙️ 自動切換新埠
+      } else {
+        console.error("💥 伺服器啟動錯誤：", err);
+      }
+    });
+}
+
+startServer(PORT);
+
+/* 💓 防止 Railway 停止容器（保活機制） */
 setInterval(() => {
   console.log("💤 Inspiro AI still alive at", new Date().toLocaleTimeString());
 }, 60000);
