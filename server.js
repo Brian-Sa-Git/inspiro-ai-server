@@ -1,44 +1,52 @@
 import express from "express";
 import cors from "cors";
 import bodyParser from "body-parser";
-import fetch from "node-fetch"; // ✅ 這行是關鍵
+import fetch from "node-fetch"; // ✅ 必加，否則 fetch 會報錯
 
 const app = express();
 
-/* ✅ CORS */
+/* ✅ CORS — 允許 Squarespace 與前端呼叫 */
 app.use(
   cors({
-    origin: "*", // 可改成 "https://你的Squarespace網址"
+    origin: "*", // 🚨 想更安全可改成 "https://你的Squarespace網址"
     methods: ["GET", "POST"],
     allowedHeaders: ["Content-Type"],
   })
 );
 
-/* ✅ 移除重複 X-Frame-Options */
+/* ✅ 移除重複 X-Frame-Options（Squarespace 需要 iframe 嵌入） */
 app.use((req, res, next) => {
   res.removeHeader("X-Frame-Options");
   next();
 });
 
-/* ✅ 安全性標頭 */
+/* ✅ 安全標頭設定（防 XSS、外連限制） */
 app.use((req, res, next) => {
+  // 1️⃣ 推薦人資訊
   res.setHeader("Referrer-Policy", "no-referrer-when-downgrade");
+
+  // 2️⃣ 禁止攝影機、麥克風、定位等權限
   res.setHeader(
     "Permissions-Policy",
     "camera=(), microphone=(), geolocation=()"
   );
+
+  // 3️⃣ 內容安全策略（CSP）— ⚠️ 請換成你的實際 Squarespace 網址！
   res.setHeader(
     "Content-Security-Policy",
-    "default-src 'self' https: data: blob:; connect-src 'self' https://你的Squarespace網址 https://generativelanguage.googleapis.com; img-src 'self' https: data:; script-src 'self' 'unsafe-inline' https:; style-src 'self' 'unsafe-inline' https:;"
+    "default-src 'self' https: data: blob:; connect-src 'self' https://inspiro.squarespace.com https://generativelanguage.googleapis.com; img-src 'self' https: data:; script-src 'self' 'unsafe-inline' https:; style-src 'self' 'unsafe-inline' https:;"
   );
+
   next();
 });
 
 app.use(bodyParser.json());
 
+/* ✅ API Key 與模型設定 */
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const MODEL = process.env.GEMINI_MODEL || "gemini-1.5-flash";
 
+/* ✅ Inspiro AI 的人格設定 */
 const INSPRIRO_SYSTEM_PROMPT = `
 你是 Inspiro AI，一個高級靈感創作助理。
 請注意：
@@ -49,10 +57,12 @@ const INSPRIRO_SYSTEM_PROMPT = `
 5️⃣ 若被問及身分，請回答：「我是 Inspiro AI，由創作者團隊打造的智慧靈感夥伴。」。
 `;
 
+/* ✅ 測試用根路徑 */
 app.get("/", (req, res) => {
-  res.send(`🚀 Inspiro AI 伺服器已啟動，模型：${MODEL}`);
+  res.send(`🚀 Inspiro AI Server 已啟動，模型：${MODEL}`);
 });
 
+/* ✅ 主要聊天 API */
 app.post("/api/generate", async (req, res) => {
   try {
     const { message } = req.body;
@@ -92,7 +102,9 @@ app.post("/api/generate", async (req, res) => {
     if (!r.ok) {
       console.error("❌ Inspiro AI 上游錯誤：", r.status, data);
       return res.status(500).json({
-        reply: data?.error?.message || "⚠️ Inspiro AI 發生暫時錯誤，請稍後再試。",
+        reply: `⚠️ Inspiro AI 上游錯誤（${r.status}）：${
+          data?.error?.message || "未知原因"
+        }`,
       });
     }
 
@@ -109,6 +121,7 @@ app.post("/api/generate", async (req, res) => {
   }
 });
 
+/* ✅ 啟動伺服器 */
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () =>
   console.log(`✅ Inspiro AI server running on port ${PORT}`)
