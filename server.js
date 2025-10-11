@@ -1,13 +1,22 @@
+/* =========================================
+ 🌟 Inspiro AI Server — 完整整合版
+ 安全性強化 + 聊天 API + Google/FB 登入
+========================================= */
+
 import express from "express";
 import cors from "cors";
 import bodyParser from "body-parser";
+import session from "express-session";
+import passport from "passport";
+import { Strategy as GoogleStrategy } from "passport-google-oauth20";
+import { Strategy as FacebookStrategy } from "passport-facebook";
 
 const app = express();
 
 /* === 允許 Squarespace 前端跨域呼叫 === */
 app.use(
   cors({
-    origin: "*", // 💡 可改成你的 Squarespace 網址，例如 "https://amphibian-hyperboloid-z7dj.squarespace.com"
+    origin: "*", // 💡 可改成你的正式網址，如 "https://amphibian-hyperboloid-z7dj.squarespace.com"
     methods: ["GET", "POST"],
     allowedHeaders: ["Content-Type"],
   })
@@ -35,9 +44,20 @@ app.use((req, res, next) => {
 
 app.use(bodyParser.json());
 
-/* === API 金鑰與模型設定 === */
+/* === 啟用登入 session（必要） === */
+app.use(
+  session({
+    secret: process.env.SESSION_SECRET || "inspiro-secret",
+    resave: false,
+    saveUninitialized: true,
+  })
+);
+app.use(passport.initialize());
+app.use(passport.session());
+
+/* === Inspiro AI 金鑰與模型設定 === */
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const MODEL = process.env.GEMINI_MODEL || "gemini-2.0-flash"; // ✅ 可改 gemini-2.0-flash-exp
+const MODEL = process.env.GEMINI_MODEL || "gemini-2.0-flash";
 
 /* === Inspiro AI 系統人格設定 === */
 const INSPRIRO_SYSTEM_PROMPT = `
@@ -60,19 +80,19 @@ async function fetchWithRetry(url, options, retries = 3) {
   for (let i = 0; i < retries; i++) {
     try {
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 10000); // ⏳ 10 秒逾時
+      const timeout = setTimeout(() => controller.abort(), 10000);
       const res = await fetch(url, { ...options, signal: controller.signal });
       clearTimeout(timeout);
       if (res.ok) return res;
       console.warn(`⚠️ 第 ${i + 1} 次嘗試失敗 (${res.status})`);
     } catch (err) {
       console.warn(`⚠️ 第 ${i + 1} 次連線失敗：${err.message}`);
-      if (i === retries - 1) throw err; // 超過重試次數後拋出
+      if (i === retries - 1) throw err;
     }
   }
 }
 
-/* === 主要聊天 API === */
+/* === Inspiro AI 聊天主要 API === */
 app.post("/api/generate", async (req, res) => {
   try {
     const { message } = req.body;
@@ -83,7 +103,7 @@ app.post("/api/generate", async (req, res) => {
       });
     }
 
-    const apiVersion = "v1";
+    const apiVersion = "v1beta";
     const url = `https://generativelanguage.googleapis.com/${apiVersion}/models/${MODEL}:generateContent?key=${GEMINI_API_KEY}`;
 
     const payload = {
@@ -101,16 +121,13 @@ app.post("/api/generate", async (req, res) => {
       },
     };
 
-    // ✅ 使用自動重試版本
     const r = await fetchWithRetry(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
 
-    if (!r) {
-      throw new Error("AI 服務連線失敗。");
-    }
+    if (!r) throw new Error("AI 服務連線失敗。");
 
     const data = await r.json();
 
@@ -134,28 +151,73 @@ app.post("/api/generate", async (req, res) => {
   }
 });
 
+/* === Google 登入設定 === */
+passport.use(
+  new GoogleStrategy(
+    {
+      clientID: process.env.GOOGLE_CLIENT_ID,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+      callbackURL: "https://inspiro-ai-server-production.up.railway.app/auth/google/callback",
+    },
+    (accessToken, refreshToken, profile, done) => {
+      return done(null, profile);
+    }
+  )
+);
 
-/* === 啟動伺服器（含自動重啟修復）=== */
+/* === Facebook 登入設定 === */
+passport.use(
+  new FacebookStrategy(
+    {
+      clientID: process.env.FACEBOOK_APP_ID,
+      clientSecret: process.env.FACEBOOK_APP_SECRET,
+      callbackURL: "https://inspiro-ai-server-production.up.railway.app/auth/facebook/callback",
+    },
+    (accessToken, refreshToken, profile, done) => {
+      return done(null, profile);
+    }
+  )
+);
+
+passport.serializeUser((user, done) => done(null, user));
+passport.deserializeUser((obj, done) => done(null, obj));
+
+/* === 登入路由 === */
+app.get("/auth/google", passport.authenticate("google", { scope: ["profile", "email"] }));
+app.get(
+  "/auth/google/callback",
+  passport.authenticate("google", { failureRedirect: "/" }),
+  (req, res) => {
+    res.redirect("https://amphibian-hyperboloid-z7dj.squarespace.com/login-success");
+  }
+);
+
+app.get("/auth/facebook", passport.authenticate("facebook"));
+app.get(
+  "/auth/facebook/callback",
+  passport.authenticate("facebook", { failureRedirect: "/" }),
+  (req, res) => {
+    res.redirect("https://amphibian-hyperboloid-z7dj.squarespace.com/login-success");
+  }
+);
+
+/* === 啟動伺服器（含保活機制） === */
 const PORT = process.env.PORT || 8080;
-
 function startServer(port) {
   app
-    .listen(port, () => {
-      console.log(`✅ Inspiro AI server running on port ${port}`);
-    })
+    .listen(port, () => console.log(`✅ Inspiro AI server running on port ${port}`))
     .on("error", (err) => {
       if (err.code === "EADDRINUSE") {
         console.warn(`⚠️ Port ${port} 已被佔用，嘗試使用新埠 ${port + 1}...`);
-        startServer(port + 1); // ⚙️ 自動切換新埠
+        startServer(port + 1);
       } else {
         console.error("💥 伺服器啟動錯誤：", err);
       }
     });
 }
-
 startServer(PORT);
 
-/* 💓 防止 Railway 停止容器（保活機制） */
+/* 💓 防止 Railway 自動休眠（保活機制） */
 setInterval(() => {
   console.log("💤 Inspiro AI still alive at", new Date().toLocaleTimeString());
 }, 60000);
