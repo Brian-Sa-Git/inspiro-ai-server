@@ -139,3 +139,11 @@ const PORT = process.env.PORT || 8080;
 app.listen(PORT, () =>
   console.log(`✅ Inspiro AI server running on port ${PORT}`)
 );
+app.listen(PORT, () =>
+  console.log(`✅ Inspiro AI server running on port ${PORT}`)
+);
+
+// 💓 防止 Railway 停止容器（保活機制）
+setInterval(() => {
+  console.log("💤 Inspiro AI still alive at", new Date().toLocaleTimeString());
+}, 60000);
