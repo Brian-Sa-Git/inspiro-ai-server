@@ -1,6 +1,7 @@
 {
   "name": "inspiro-ai-server",
   "version": "1.0.0",
+  "description": "Inspiro AI backend server for chat and OAuth login",
   "main": "server.js",
   "type": "module",
   "scripts": {
@@ -15,5 +16,8 @@
     "passport-google-oauth20": "^2.0.0",
     "passport-facebook": "^3.0.0",
     "node-fetch": "^3.3.2"
+  },
+  "engines": {
+    "node": ">=18"
   }
 }
