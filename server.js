@@ -70,7 +70,9 @@ app.post("/api/generate", async (req, res) => {
   try {
     const { message } = req.body;
     if (!GEMINI_API_KEY) {
-      return res.status(500).json({ reply: "⚠️ Inspiro AI 金鑰未設定，請稍後再試。" });
+      return res
+        .status(500)
+        .json({ reply: "⚠️ Inspiro AI 金鑰未設定，請稍後再試。" });
     }
 
     const apiVersion = "v1beta";
@@ -80,7 +82,9 @@ app.post("/api/generate", async (req, res) => {
       contents: [
         {
           role: "user",
-          parts: [{ text: `${INSPRIRO_SYSTEM_PROMPT}\n\n使用者訊息：${message}` }],
+          parts: [
+            { text: `${INSPRIRO_SYSTEM_PROMPT}\n\n使用者訊息：${message}` },
+          ],
         },
       ],
       generationConfig: { temperature: 0.9, maxOutputTokens: 800 },
@@ -104,46 +108,64 @@ app.post("/api/generate", async (req, res) => {
   }
 });
 
-/* === Google 登入 === */
-passport.use(
-  new GoogleStrategy(
-    {
-      clientID: process.env.GOOGLE_CLIENT_ID,
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-      callbackURL: "https://inspiro-ai-server-production.up.railway.app/auth/google/callback",
-    },
-    (accessToken, refreshToken, profile, done) => done(null, profile)
-  )
-);
+/* === Google 登入（如果有設定才啟用） === */
+if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
+  passport.use(
+    new GoogleStrategy(
+      {
+        clientID: process.env.GOOGLE_CLIENT_ID,
+        clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+        callbackURL:
+          "https://inspiro-ai-server-production.up.railway.app/auth/google/callback",
+      },
+      (accessToken, refreshToken, profile, done) => done(null, profile)
+    )
+  );
+  console.log("✅ Google 登入已啟用");
+} else {
+  console.warn("⚠️ Google 登入未啟用（缺少 GOOGLE_CLIENT_ID 或 SECRET）");
+}
 
-/* === Facebook 登入 === */
-passport.use(
-  new FacebookStrategy(
-    {
-      clientID: process.env.FACEBOOK_APP_ID,
-      clientSecret: process.env.FACEBOOK_APP_SECRET,
-      callbackURL: "https://inspiro-ai-server-production.up.railway.app/auth/facebook/callback",
-    },
-    (accessToken, refreshToken, profile, done) => done(null, profile)
-  )
-);
-
-passport.serializeUser((user, done) => done(null, user));
-passport.deserializeUser((obj, done) => done(null, obj));
+/* === Facebook 登入（如果有設定才啟用） === */
+if (process.env.FACEBOOK_APP_ID && process.env.FACEBOOK_APP_SECRET) {
+  passport.use(
+    new FacebookStrategy(
+      {
+        clientID: process.env.FACEBOOK_APP_ID,
+        clientSecret: process.env.FACEBOOK_APP_SECRET,
+        callbackURL:
+          "https://inspiro-ai-server-production.up.railway.app/auth/facebook/callback",
+      },
+      (accessToken, refreshToken, profile, done) => done(null, profile)
+    )
+  );
+  console.log("✅ Facebook 登入已啟用");
+} else {
+  console.warn("⚠️ Facebook 登入未啟用（缺少 APP_ID 或 SECRET）");
+}
 
 /* === 登入路由 === */
-app.get("/auth/google", passport.authenticate("google", { scope: ["profile", "email"] }));
+app.get(
+  "/auth/google",
+  passport.authenticate("google", { scope: ["profile", "email"] })
+);
 app.get(
   "/auth/google/callback",
   passport.authenticate("google", { failureRedirect: "/" }),
-  (req, res) => res.redirect("https://amphibian-hyperboloid-z7dj.squarespace.com/login-success")
+  (req, res) =>
+    res.redirect(
+      "https://amphibian-hyperboloid-z7dj.squarespace.com/login-success"
+    )
 );
 
 app.get("/auth/facebook", passport.authenticate("facebook"));
 app.get(
   "/auth/facebook/callback",
   passport.authenticate("facebook", { failureRedirect: "/" }),
-  (req, res) => res.redirect("https://amphibian-hyperboloid-z7dj.squarespace.com/login-success")
+  (req, res) =>
+    res.redirect(
+      "https://amphibian-hyperboloid-z7dj.squarespace.com/login-success"
+    )
 );
 
 /* === 啟動伺服器 === */
