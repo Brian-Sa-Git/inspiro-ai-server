@@ -8,7 +8,7 @@ const app = express();
 /* ✅ CORS — 允許 Squarespace 與前端呼叫 */
 app.use(
   cors({
-    origin: "*", // 🚨 想更安全可改成 "https://你的Squarespace網址"
+    origin: "https://amphibian-hyperboloid-z7dj.squarespace.com/features", // 🚨 想更安全可改成 "https://你的Squarespace網址"
     methods: ["GET", "POST"],
     allowedHeaders: ["Content-Type"],
   })
@@ -33,9 +33,10 @@ app.use((req, res, next) => {
 
   // 3️⃣ 內容安全策略（CSP）— ⚠️ 請換成你的實際 Squarespace 網址！
   res.setHeader(
-    "Content-Security-Policy",
-    "default-src 'self' https: data: blob:; connect-src 'self' https://inspiro.squarespace.com https://generativelanguage.googleapis.com; img-src 'self' https: data:; script-src 'self' 'unsafe-inline' https:; style-src 'self' 'unsafe-inline' https:;"
-  );
+  "Content-Security-Policy",
+  "default-src 'self' https: data: blob:; connect-src 'self' https://amphibian-hyperboloid-z7dj.squarespace.com https://generativelanguage.googleapis.com; img-src 'self' https: data:; script-src 'self' 'unsafe-inline' https:; style-src 'self' 'unsafe-inline' https:;"
+);
+
 
   next();
 });
