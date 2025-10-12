@@ -3,6 +3,7 @@ import express from "express";
 import cors from "cors";
 import bodyParser from "body-parser";
 import session from "express-session";
+import MemoryStore from "memorystore";
 import passport from "passport";
 import { Strategy as GoogleStrategy } from "passport-google-oauth20";
 import { Strategy as FacebookStrategy } from "passport-facebook";
@@ -23,9 +24,12 @@ app.use((req, res, next) => {
   next();
 });
 
-/* === 🧠 Session 設定 === */
+/* === 🧠 Session 設定（使用 MemoryStore 改良版）=== */
+const Memorystore = MemoryStore(session);
 app.use(
   session({
+    cookie: { maxAge: 86400000 }, // 1 天
+    store: new Memorystore({ checkPeriod: 86400000 }),
     secret: process.env.SESSION_SECRET || "inspiro-secret",
     resave: false,
     saveUninitialized: false,
@@ -78,7 +82,10 @@ app.post("/api/generate", async (req, res) => {
     });
 
     const data = await r.json();
-    const aiText = data?.candidates?.[0]?.content?.parts?.[0]?.text || "🤖 Inspiro AI 暫時沒有回覆內容。";
+    const aiText =
+      data?.candidates?.[0]?.content?.parts?.[0]?.text ||
+      "🤖 Inspiro AI 暫時沒有回覆內容。";
+
     res.json({ reply: aiText });
   } catch (err) {
     console.error("💥 Inspiro AI 對話錯誤：", err);
@@ -91,21 +98,20 @@ app.post("/api/image", async (req, res) => {
   try {
     let { prompt } = req.body;
 
-    // 🧩 防呆處理
+    // 🧩 防呆：若未輸入主題，自動補預設
     if (!prompt || prompt.trim().length < 2) {
       console.warn("⚠️ 未提供 prompt，自動使用預設主題。");
       prompt = "AI 藝術風格圖，主題為流動的光與創意靈感，精品風格";
     }
 
-    // 🪄 自動添加黑金精品風格描述
+    // 💎 自動加上精品風格描述
     const styledPrompt = `
 主題：${prompt}
-請生成一張畫質高、構圖清晰、黑金精品風格的圖像。
-整體風格為明亮科技感、奢華高端、立體光影、乾淨背景。
+請生成一張畫質高、黑金精品風格、明亮科技感、立體光影、乾淨背景的圖片。
 `;
 
     console.log(`🎨 開始生成圖片：「${prompt}」`);
-    console.log("⏩ 已略過 OpenAI，改用 Gemini / Hugging Face 引擎。");
+    console.log("⏩ 使用 Gemini / Hugging Face 引擎。");
 
     /* === 1️⃣ Gemini 生成圖片 === */
     const GEMINI_IMAGE_KEY = process.env.GEMINI_API_KEY;
@@ -172,14 +178,17 @@ app.post("/api/image", async (req, res) => {
       console.log("🔵 使用 Hugging Face 生成圖片...");
       try {
         const model = "stabilityai/stable-diffusion-xl-base-1.0";
-        const response = await fetch(`https://api-inference.huggingface.co/models/${model}`, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${HF_TOKEN}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ inputs: styledPrompt }),
-        });
+        const response = await fetch(
+          `https://api-inference.huggingface.co/models/${model}`,
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${HF_TOKEN}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ inputs: styledPrompt }),
+          }
+        );
 
         const arrayBuffer = await response.arrayBuffer();
         const imageBuffer = Buffer.from(arrayBuffer);
