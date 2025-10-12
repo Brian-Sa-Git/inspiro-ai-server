@@ -79,7 +79,7 @@ app.post("/api/generate", async (req, res) => {
     const aiText = data?.candidates?.[0]?.content?.parts?.[0]?.text || "🤖 Inspiro AI 暫時沒有回覆內容。";
     res.json({ reply: aiText });
   } catch (err) {
-    console.error("💥 Inspiro AI 伺服器錯誤：", err);
+    console.error("💥 Inspiro AI 對話錯誤：", err);
     res.status(500).json({ reply: "⚠️ Inspiro AI 發生暫時錯誤。" });
   }
 });
@@ -96,8 +96,6 @@ app.post("/api/image", async (req, res) => {
     }
 
     console.log(`🎨 開始生成圖片：「${prompt}」`);
-
-    /* 🚫 已關閉 OpenAI（暫停使用 DALL·E） */
     console.log("⏩ 已略過 OpenAI，改用 Gemini / Hugging Face 引擎。");
 
     /* === 1️⃣ Gemini === */
@@ -132,7 +130,6 @@ app.post("/api/image", async (req, res) => {
           data?.candidates?.[0]?.content?.parts?.[0]?.inline_data?.data ||
           data?.candidates?.[0]?.content?.parts?.[0]?.text;
 
-        // 🧹 清除多餘空格 / 換行
         base64Image = base64Image?.replace(/[\r\n\s]/g, "");
 
         if (base64Image && /^[A-Za-z0-9+/]+={0,2}$/.test(base64Image)) {
@@ -156,7 +153,7 @@ app.post("/api/image", async (req, res) => {
           console.warn("⚠️ Gemini 回傳非圖片內容");
         }
       } catch (err) {
-        console.error("💥 Gemini 錯誤：", err.message);
+        console.error("💥 Gemini 圖片生成錯誤：", err.message);
       }
     }
 
@@ -208,8 +205,24 @@ app.post("/api/image", async (req, res) => {
   }
 });
 
-/* === 📁 靜態資料夾：提供圖片下載 === */
-app.use("/generated", express.static("generated"));
+/* === 📁 靜態資料夾：提供圖片下載（支援跨來源 + MIME 修正）=== */
+app.use("/generated", (req, res) => {
+  try {
+    const filePath = path.join(process.cwd(), "generated", decodeURIComponent(req.path));
+    if (!fs.existsSync(filePath)) return res.status(404).send("❌ 圖片不存在");
+
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+    res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+    res.setHeader("Content-Type", "image/png");
+
+    res.sendFile(filePath);
+  } catch (err) {
+    console.error("⚠️ 圖片回傳錯誤：", err);
+    res.status(500).send("⚠️ Inspiro AI 圖片提供發生錯誤");
+  }
+});
 
 /* === 🚀 啟動伺服器 === */
 const PORT = process.env.PORT || 8080;
