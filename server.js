@@ -7,6 +7,8 @@ import passport from "passport";
 import { Strategy as GoogleStrategy } from "passport-google-oauth20";
 import { Strategy as FacebookStrategy } from "passport-facebook";
 import fetch from "node-fetch";
+import fs from "fs";
+import path from "path";
 
 /* === 🧱 建立伺服器 === */
 const app = express();
@@ -82,12 +84,12 @@ app.post("/api/generate", async (req, res) => {
   }
 });
 
-/* === 🎨 Inspiro AI 三引擎圖片生成 API（OpenAI + Gemini + Hugging Face）=== */
+/* === 🎨 Inspiro AI 三引擎圖片生成 API（即時顯示 + 自動下載）=== */
 app.post("/api/image", async (req, res) => {
   try {
     let { prompt } = req.body;
 
-    // 🧩 若沒輸入描述，自動帶入預設主題
+    // 🧩 防呆：若未輸入主題，自動補預設
     if (!prompt || prompt.trim().length < 2) {
       console.warn("⚠️ 未提供 prompt，自動使用預設主題。");
       prompt = "AI 藝術風格圖，主題為流動的光與創意靈感，精品風格";
@@ -96,7 +98,7 @@ app.post("/api/image", async (req, res) => {
     const timestamp = new Date().toLocaleTimeString();
     console.log(`🕓 [${timestamp}] 🎨 Inspiro AI 開始生成圖片：${prompt}`);
 
-    /* === 1️⃣ 嘗試使用 OpenAI DALL·E 3 === */
+    // === 1️⃣ 優先使用 OpenAI DALL·E ===
     const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
     if (OPENAI_API_KEY) {
       console.log("🟢 使用 OpenAI gpt-image-1 生成圖片中…");
@@ -115,19 +117,20 @@ app.post("/api/image", async (req, res) => {
         });
 
         const data = await response.json();
-
         if (data?.data?.[0]?.url) {
           console.log("✅ OpenAI 成功生成圖片");
-          return res.json({ source: "openai", image: data.data[0].url });
-        } else {
-          console.warn("⚠️ OpenAI 無法生成圖片，改用 Gemini。");
+          return res.json({
+            source: "openai",
+            image: data.data[0].url,
+            download: data.data[0].url,
+          });
         }
       } catch (err) {
-        console.error("💥 OpenAI 錯誤：", err.message);
+        console.error("💥 OpenAI 生成錯誤：", err.message);
       }
     }
 
-    /* === 2️⃣ 嘗試使用 Gemini === */
+    // === 2️⃣ 改用 Gemini ===
     const GEMINI_IMAGE_KEY = process.env.GEMINI_API_KEY;
     const MODEL_IMAGE = process.env.GEMINI_MODEL || "gemini-2.0-flash-exp";
     if (GEMINI_IMAGE_KEY) {
@@ -140,7 +143,7 @@ app.post("/api/image", async (req, res) => {
               role: "user",
               parts: [
                 {
-                  text: `請生成一張圖片：「${prompt}」。請以 base64 編碼輸出，不要附文字或說明。`,
+                  text: `請生成一張圖片：「${prompt}」。請以 base64 編碼輸出，不要附文字。`,
                 },
               ],
             },
@@ -159,23 +162,31 @@ app.post("/api/image", async (req, res) => {
           data?.candidates?.[0]?.content?.parts?.[0]?.text;
 
         if (base64Image) {
-          console.log("✅ Gemini 成功生成圖片");
+          const imageBuffer = Buffer.from(base64Image, "base64");
+          const folderPath = path.join(process.cwd(), "generated");
+          if (!fs.existsSync(folderPath)) fs.mkdirSync(folderPath);
+          const fileName = `inspiro-${Date.now()}.png`;
+          const filePath = path.join(folderPath, fileName);
+          fs.writeFileSync(filePath, imageBuffer);
+
+          const downloadUrl = `${req.protocol}://${req.get("host")}/generated/${fileName}`;
+          console.log("✅ Gemini 成功生成圖片並已儲存：", fileName);
+
           return res.json({
             source: "gemini",
             image: `data:image/png;base64,${base64Image}`,
+            download: downloadUrl,
           });
-        } else {
-          console.warn("⚠️ Gemini 沒有回傳圖片內容，改用 Hugging Face。");
         }
       } catch (err) {
         console.error("💥 Gemini 錯誤：", err.message);
       }
     }
 
-    /* === 3️⃣ 最後使用 Hugging Face (免費方案) === */
+    // === 3️⃣ 最後使用 Hugging Face (免費方案) ===
     const HF_TOKEN = process.env.HF_TOKEN;
     if (HF_TOKEN) {
-      console.log("🔵 使用 Hugging Face Stable Diffusion 生成圖片中…");
+      console.log("🔵 使用 Hugging Face 生成圖片中…");
       try {
         const model = "stabilityai/stable-diffusion-xl-base-1.0";
         const response = await fetch(`https://api-inference.huggingface.co/models/${model}`, {
@@ -187,35 +198,40 @@ app.post("/api/image", async (req, res) => {
           body: JSON.stringify({ inputs: prompt }),
         });
 
-        if (!response.ok) {
-          const errorText = await response.text();
-          console.error("⚠️ Hugging Face 回應錯誤：", errorText);
-          throw new Error("Hugging Face 生成失敗");
-        }
-
         const arrayBuffer = await response.arrayBuffer();
-        const base64Image = Buffer.from(arrayBuffer).toString("base64");
+        const imageBuffer = Buffer.from(arrayBuffer);
+        const base64Image = imageBuffer.toString("base64");
 
-        console.log("✅ Hugging Face 成功生成圖片");
+        const folderPath = path.join(process.cwd(), "generated");
+        if (!fs.existsSync(folderPath)) fs.mkdirSync(folderPath);
+        const fileName = `inspiro-${Date.now()}.png`;
+        const filePath = path.join(folderPath, fileName);
+        fs.writeFileSync(filePath, imageBuffer);
+
+        const downloadUrl = `${req.protocol}://${req.get("host")}/generated/${fileName}`;
+        console.log("✅ Hugging Face 成功生成圖片：", fileName);
+
         return res.json({
           source: "huggingface",
           image: `data:image/png;base64,${base64Image}`,
+          download: downloadUrl,
         });
       } catch (err) {
         console.error("💥 Hugging Face 錯誤：", err.message);
       }
     }
 
-    /* === 全部失敗 === */
+    // === 全部失敗 ===
     console.error("❌ Inspiro AI 所有引擎皆失敗。");
-    return res.status(500).json({
-      error: "⚠️ Inspiro AI 無法生成圖片，請稍後再試。",
-    });
+    res.status(500).json({ error: "⚠️ Inspiro AI 無法生成圖片，請稍後再試。" });
   } catch (err) {
     console.error("💥 Inspiro AI 圖片生成系統錯誤：", err.message);
     res.status(500).json({ error: "⚠️ Inspiro AI 系統錯誤" });
   }
 });
+
+/* === 📁 提供圖片下載靜態資料夾 === */
+app.use("/generated", express.static("generated"));
 
 /* === 🚀 啟動伺服器 === */
 const PORT = process.env.PORT || 8080;
