@@ -179,6 +179,30 @@ app.get(
     res.redirect("https://amphibian-hyperboloid-z7dj.squarespace.com/login-success");
   }
 );
+/* === 🎨 AI 圖片生成 API === */
+app.post("/api/image", async (req, res) => {
+  try {
+    const { prompt } = req.body;
+    const response = await fetch("https://api.openai.com/v1/images/generations", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: "gpt-image-1", // DALL·E 3
+        prompt: prompt,
+        size: "1024x1024"
+      }),
+    });
+
+    const data = await response.json();
+    res.json({ image: data.data[0].url });
+  } catch (err) {
+    console.error("💥 AI 圖片生成錯誤：", err);
+    res.status(500).json({ error: "AI 圖片生成失敗" });
+  }
+});
 
 /* === 🚀 啟動伺服器 === */
 const PORT = process.env.PORT || 8080;
