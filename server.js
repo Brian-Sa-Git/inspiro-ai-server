@@ -29,6 +29,7 @@ app.use((req, res, next) => {
 });
 
 /* === 🧠 Session 設定 === */
+// ⚠️ MemoryStore 僅適合開發環境，正式部署可改 Redis / Mongo
 app.use(
   session({
     secret: process.env.SESSION_SECRET || "inspiro-secret",
@@ -185,3 +186,9 @@ app.listen(PORT, () => {
   console.log(`🚀 Inspiro AI Server running on port ${PORT}`);
   console.log("🌍 狀態檢查：AI 模型 =", MODEL);
 });
+
+/* === 💤 防止 Railway 自動休眠 === */
+setInterval(() => {
+  console.log("💤 Inspiro AI still alive at", new Date().toLocaleTimeString());
+  fetch("https://inspiro-ai-server-production.up.railway.app/").catch(() => {});
+}, 60 * 1000);
