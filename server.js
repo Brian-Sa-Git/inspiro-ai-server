@@ -17,7 +17,6 @@ app.use(
     allowedHeaders: ["Content-Type"],
   })
 );
-
 app.use(bodyParser.json());
 
 /* === 🔐 安全性標頭 === */
@@ -29,7 +28,6 @@ app.use((req, res, next) => {
 });
 
 /* === 🧠 Session 設定 === */
-// ⚠️ MemoryStore 僅適合開發環境，正式部署可改 Redis / Mongo
 app.use(
   session({
     secret: process.env.SESSION_SECRET || "inspiro-secret",
@@ -58,7 +56,7 @@ app.get("/", (req, res) => {
   res.send(`✅ Inspiro AI Server 已啟動（模型：${MODEL}）`);
 });
 
-/* === 🤖 AI 對話 API === */
+/* === 🤖 Gemini 對話 API === */
 app.post("/api/generate", async (req, res) => {
   try {
     const { message } = req.body;
@@ -66,9 +64,7 @@ app.post("/api/generate", async (req, res) => {
       return res.status(500).json({ reply: "⚠️ Inspiro AI 金鑰未設定，請稍後再試。" });
     }
 
-    const apiVersion = "v1beta";
-    const url = `https://generativelanguage.googleapis.com/${apiVersion}/models/${MODEL}:generateContent?key=${GEMINI_API_KEY}`;
-
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${GEMINI_API_KEY}`;
     const payload = {
       contents: [
         {
@@ -97,7 +93,6 @@ app.post("/api/generate", async (req, res) => {
 
 /* === 🔑 Google 登入設定 === */
 if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
-  console.log("🔹 檢測到 Google OAuth 環境變數，正在註冊策略...");
   passport.use(
     new GoogleStrategy(
       {
@@ -115,7 +110,6 @@ if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
 
 /* === 🔵 Facebook 登入設定 === */
 if (process.env.FACEBOOK_APP_ID && process.env.FACEBOOK_APP_SECRET) {
-  console.log("🔹 檢測到 Facebook OAuth 環境變數，正在註冊策略...");
   passport.use(
     new FacebookStrategy(
       {
@@ -136,85 +130,61 @@ if (process.env.FACEBOOK_APP_ID && process.env.FACEBOOK_APP_SECRET) {
 passport.serializeUser((user, done) => done(null, user));
 passport.deserializeUser((obj, done) => done(null, obj));
 
-/* === 🚪 Google 登入路由 === */
-app.get(
-  "/auth/google",
-  (req, res, next) => {
-    if (!passport._strategy("google")) {
-      console.error("❌ Google 登入策略尚未啟用");
-      return res.status(500).send("⚠️ Google 登入未啟用，請確認環境變數設定。");
-    }
-    next();
-  },
-  passport.authenticate("google", { scope: ["profile", "email"] })
-);
-
-app.get(
-  "/auth/google/callback",
-  passport.authenticate("google", { failureRedirect: "/" }),
-  (req, res) => {
-    console.log("🎉 Google 登入成功，導回 Squarespace 首頁");
-    res.redirect("https://amphibian-hyperboloid-z7dj.squarespace.com/login-success");
-  }
-);
-
-/* === 🔷 Facebook 登入路由 === */
-app.get(
-  "/auth/facebook",
-  (req, res, next) => {
-    if (!passport._strategy("facebook")) {
-      console.error("❌ Facebook 登入策略尚未啟用");
-      return res.status(500).send("⚠️ Facebook 登入未啟用，請確認環境變數設定。");
-    }
-    next();
-  },
-  passport.authenticate("facebook")
-);
-
-app.get(
-  "/auth/facebook/callback",
-  passport.authenticate("facebook", { failureRedirect: "/" }),
-  (req, res) => {
-    console.log("🎉 Facebook 登入成功，導回 Squarespace 首頁");
-    res.redirect("https://amphibian-hyperboloid-z7dj.squarespace.com/login-success");
-  }
-);
-
-/* === 🎨 AI 圖片生成 API === */
+/* === 🎨 Gemini 圖片生成 API (免費版) === */
 app.post("/api/image", async (req, res) => {
   try {
     const { prompt } = req.body;
-    const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-
-    if (!OPENAI_API_KEY) {
-      console.error("❌ 缺少 OPENAI_API_KEY");
-      return res.status(500).json({ error: "⚠️ 尚未設定 OPENAI_API_KEY，請到 Railway Variables 新增。" });
+    if (!GEMINI_API_KEY) {
+      console.error("❌ 缺少 GEMINI_API_KEY");
+      return res.status(500).json({ error: "⚠️ 尚未設定 GEMINI_API_KEY，請到 Railway Variables 新增。" });
     }
 
-    const response = await fetch("https://api.openai.com/v1/images/generations", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${OPENAI_API_KEY}`,
+    if (!prompt || prompt.trim().length < 2) {
+      return res.status(400).json({ error: "⚠️ 請提供清楚的圖片描述內容。" });
+    }
+
+    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`;
+    const payload = {
+      contents: [
+        {
+          parts: [
+            {
+              text: `請根據以下文字描述生成一張圖片：「${prompt}」。請輸出 base64 編碼的圖片，不要附文字。`,
+            },
+          ],
+        },
+      ],
+      generationConfig: {
+        temperature: 0.7,
+        maxOutputTokens: 1024,
       },
-      body: JSON.stringify({
-        model: "gpt-image-1", // DALL·E 3
-        prompt: prompt,
-        size: "1024x1024"
-      }),
+    };
+
+    const response = await fetch(apiUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
     });
 
     const data = await response.json();
+    const base64Image =
+      data?.candidates?.[0]?.content?.parts?.[0]?.inline_data?.data ||
+      data?.candidates?.[0]?.content?.parts?.[0]?.text;
 
-    if (!data?.data?.[0]?.url) {
-      console.error("⚠️ OpenAI 回傳資料異常：", data);
-      return res.status(500).json({ error: "AI 圖片生成失敗，請稍後再試。" });
+    if (!base64Image) {
+      console.error("⚠️ Gemini 回傳內容異常：", data);
+      return res.status(500).json({ error: "⚠️ Gemini 沒有回傳圖片內容。" });
     }
 
-    res.json({ image: data.data[0].url });
+    if (base64Image.startsWith("http")) {
+      return res.json({ image: base64Image });
+    }
+
+    const imageUrl = `data:image/png;base64,${base64Image}`;
+    return res.json({ image: imageUrl });
   } catch (err) {
-    console.error("💥 AI 圖片生成錯誤：", err);
-    res.status(500).json({ error: "AI 圖片生成失敗" });
+    console.error("💥 Gemini 圖片生成錯誤：", err);
+    res.status(500).json({ error: "⚠️ Gemini 圖片生成失敗" });
   }
 });
 
