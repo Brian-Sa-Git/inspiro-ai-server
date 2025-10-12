@@ -98,7 +98,7 @@ app.post("/api/image", async (req, res) => {
     console.log(`🎨 開始生成圖片：「${prompt}」`);
     console.log("⏩ 已略過 OpenAI，改用 Gemini / Hugging Face 引擎。");
 
-    /* === 1️⃣ Gemini === */
+    /* === 1️⃣ Gemini 生成圖片 === */
     const GEMINI_IMAGE_KEY = process.env.GEMINI_API_KEY;
     const MODEL_IMAGE = process.env.GEMINI_MODEL || "gemini-2.0-flash-exp";
 
@@ -157,7 +157,7 @@ app.post("/api/image", async (req, res) => {
       }
     }
 
-    /* === 2️⃣ Hugging Face (備援免費方案) === */
+    /* === 2️⃣ Hugging Face 備援生成 === */
     const HF_TOKEN = process.env.HF_TOKEN;
     if (HF_TOKEN) {
       console.log("🔵 使用 Hugging Face 生成圖片...");
@@ -224,6 +224,26 @@ app.use("/generated", (req, res) => {
   }
 });
 
+/* === 🧹 自動清理舊圖片（每 3 小時清理超過 3 小時的檔案）=== */
+setInterval(() => {
+  const folderPath = path.join(process.cwd(), "generated");
+  const THREE_HOURS = 3 * 60 * 60 * 1000;
+
+  if (!fs.existsSync(folderPath)) return;
+
+  const files = fs.readdirSync(folderPath);
+  const now = Date.now();
+
+  files.forEach((file) => {
+    const filePath = path.join(folderPath, file);
+    const stats = fs.statSync(filePath);
+    if (now - stats.mtimeMs > THREE_HOURS) {
+      fs.unlinkSync(filePath);
+      console.log(`🧹 自動清理：刪除舊檔案 ${file}`);
+    }
+  });
+}, 3 * 60 * 60 * 1000);
+
 /* === 🚀 啟動伺服器 === */
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
@@ -232,7 +252,11 @@ app.listen(PORT, () => {
 });
 
 /* === 💤 防止 Railway 自動休眠 === */
-setInterval(() => {
-  console.log("💤 Inspiro AI still alive at", new Date().toLocaleTimeString());
-  fetch("https://inspiro-ai-server-production.up.railway.app/").catch(() => {});
+setInterval(async () => {
+  try {
+    await fetch("https://inspiro-ai-server-production.up.railway.app/");
+    console.log("💤 Inspiro AI still alive at", new Date().toLocaleTimeString());
+  } catch {
+    console.warn("⚠️ Railway ping 失敗（可能暫時離線）");
+  }
 }, 60 * 1000);
