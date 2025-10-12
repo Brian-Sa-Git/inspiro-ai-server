@@ -179,15 +179,23 @@ app.get(
     res.redirect("https://amphibian-hyperboloid-z7dj.squarespace.com/login-success");
   }
 );
+
 /* === 🎨 AI 圖片生成 API === */
 app.post("/api/image", async (req, res) => {
   try {
     const { prompt } = req.body;
+    const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+
+    if (!OPENAI_API_KEY) {
+      console.error("❌ 缺少 OPENAI_API_KEY");
+      return res.status(500).json({ error: "⚠️ 尚未設定 OPENAI_API_KEY，請到 Railway Variables 新增。" });
+    }
+
     const response = await fetch("https://api.openai.com/v1/images/generations", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`,
+        "Authorization": `Bearer ${OPENAI_API_KEY}`,
       },
       body: JSON.stringify({
         model: "gpt-image-1", // DALL·E 3
@@ -197,6 +205,12 @@ app.post("/api/image", async (req, res) => {
     });
 
     const data = await response.json();
+
+    if (!data?.data?.[0]?.url) {
+      console.error("⚠️ OpenAI 回傳資料異常：", data);
+      return res.status(500).json({ error: "AI 圖片生成失敗，請稍後再試。" });
+    }
+
     res.json({ image: data.data[0].url });
   } catch (err) {
     console.error("💥 AI 圖片生成錯誤：", err);
