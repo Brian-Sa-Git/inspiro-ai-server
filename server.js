@@ -77,14 +77,14 @@ app.post("/api/generate", async (req, res) => {
 
     const data = await r.json();
     const aiText = data?.candidates?.[0]?.content?.parts?.[0]?.text || "🤖 Inspiro AI 暫時沒有回覆內容。";
-    return res.json({ reply: aiText });
+    res.json({ reply: aiText });
   } catch (err) {
     console.error("💥 Inspiro AI 伺服器錯誤：", err);
-    return res.status(500).json({ reply: "⚠️ Inspiro AI 發生暫時錯誤。" });
+    res.status(500).json({ reply: "⚠️ Inspiro AI 發生暫時錯誤。" });
   }
 });
 
-/* === 🎨 Inspiro AI 三引擎圖片生成 API（即時顯示 + 自動下載）=== */
+/* === 🎨 Inspiro AI 三引擎圖片生成 API（即時顯示 + 可下載）=== */
 app.post("/api/image", async (req, res) => {
   try {
     let { prompt } = req.body;
@@ -95,19 +95,18 @@ app.post("/api/image", async (req, res) => {
       prompt = "AI 藝術風格圖，主題為流動的光與創意靈感，精品風格";
     }
 
-    const timestamp = new Date().toLocaleTimeString();
-    console.log(`🕓 [${timestamp}] 🎨 Inspiro AI 開始生成圖片：${prompt}`);
+    console.log(`🎨 開始生成圖片：「${prompt}」`);
 
-    // === 1️⃣ 優先使用 OpenAI DALL·E ===
+    /* === 1️⃣ OpenAI DALL·E === */
     const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
     if (OPENAI_API_KEY) {
-      console.log("🟢 使用 OpenAI gpt-image-1 生成圖片中…");
+      console.log("🟢 使用 OpenAI gpt-image-1 生成圖片...");
       try {
         const response = await fetch("https://api.openai.com/v1/images/generations", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "Authorization": `Bearer ${OPENAI_API_KEY}`,
+            Authorization: `Bearer ${OPENAI_API_KEY}`,
           },
           body: JSON.stringify({
             model: "gpt-image-1",
@@ -126,15 +125,15 @@ app.post("/api/image", async (req, res) => {
           });
         }
       } catch (err) {
-        console.error("💥 OpenAI 生成錯誤：", err.message);
+        console.error("💥 OpenAI 錯誤：", err.message);
       }
     }
 
-    // === 2️⃣ 改用 Gemini ===
+    /* === 2️⃣ Gemini === */
     const GEMINI_IMAGE_KEY = process.env.GEMINI_API_KEY;
     const MODEL_IMAGE = process.env.GEMINI_MODEL || "gemini-2.0-flash-exp";
     if (GEMINI_IMAGE_KEY) {
-      console.log("🟡 使用 Gemini 生成圖片中…");
+      console.log("🟡 使用 Gemini 生成圖片...");
       try {
         const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_IMAGE}:generateContent?key=${GEMINI_IMAGE_KEY}`;
         const payload = {
@@ -157,11 +156,14 @@ app.post("/api/image", async (req, res) => {
         });
 
         const data = await response.json();
-        const base64Image =
+        let base64Image =
           data?.candidates?.[0]?.content?.parts?.[0]?.inline_data?.data ||
           data?.candidates?.[0]?.content?.parts?.[0]?.text;
 
-        if (base64Image) {
+        // 🧹 清理可能有換行的 base64
+        base64Image = base64Image?.replace(/[\r\n\s]/g, "");
+
+        if (base64Image && /^[A-Za-z0-9+/]+={0,2}$/.test(base64Image)) {
           const imageBuffer = Buffer.from(base64Image, "base64");
           const folderPath = path.join(process.cwd(), "generated");
           if (!fs.existsSync(folderPath)) fs.mkdirSync(folderPath);
@@ -170,29 +172,31 @@ app.post("/api/image", async (req, res) => {
           fs.writeFileSync(filePath, imageBuffer);
 
           const downloadUrl = `${req.protocol}://${req.get("host")}/generated/${fileName}`;
-          console.log("✅ Gemini 成功生成圖片並已儲存：", fileName);
+          console.log("✅ Gemini 成功生成圖片並儲存：", fileName);
 
           return res.json({
             source: "gemini",
             image: `data:image/png;base64,${base64Image}`,
             download: downloadUrl,
           });
+        } else {
+          console.warn("⚠️ Gemini 回傳非圖片內容");
         }
       } catch (err) {
         console.error("💥 Gemini 錯誤：", err.message);
       }
     }
 
-    // === 3️⃣ 最後使用 Hugging Face (免費方案) ===
+    /* === 3️⃣ Hugging Face (備援免費方案) === */
     const HF_TOKEN = process.env.HF_TOKEN;
     if (HF_TOKEN) {
-      console.log("🔵 使用 Hugging Face 生成圖片中…");
+      console.log("🔵 使用 Hugging Face 生成圖片...");
       try {
         const model = "stabilityai/stable-diffusion-xl-base-1.0";
         const response = await fetch(`https://api-inference.huggingface.co/models/${model}`, {
           method: "POST",
           headers: {
-            "Authorization": `Bearer ${HF_TOKEN}`,
+            Authorization: `Bearer ${HF_TOKEN}`,
             "Content-Type": "application/json",
           },
           body: JSON.stringify({ inputs: prompt }),
@@ -221,7 +225,7 @@ app.post("/api/image", async (req, res) => {
       }
     }
 
-    // === 全部失敗 ===
+    /* === 全部失敗 === */
     console.error("❌ Inspiro AI 所有引擎皆失敗。");
     res.status(500).json({ error: "⚠️ Inspiro AI 無法生成圖片，請稍後再試。" });
   } catch (err) {
@@ -230,7 +234,7 @@ app.post("/api/image", async (req, res) => {
   }
 });
 
-/* === 📁 提供圖片下載靜態資料夾 === */
+/* === 📁 靜態資料夾：提供圖片下載 === */
 app.use("/generated", express.static("generated"));
 
 /* === 🚀 啟動伺服器 === */
