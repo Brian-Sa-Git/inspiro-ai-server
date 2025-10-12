@@ -84,7 +84,7 @@ app.post("/api/generate", async (req, res) => {
   }
 });
 
-/* === 🎨 Inspiro AI 三引擎圖片生成 API（即時顯示 + 可下載）=== */
+/* === 🎨 Inspiro AI 圖片生成 API（Gemini + Hugging Face）=== */
 app.post("/api/image", async (req, res) => {
   try {
     let { prompt } = req.body;
@@ -97,41 +97,13 @@ app.post("/api/image", async (req, res) => {
 
     console.log(`🎨 開始生成圖片：「${prompt}」`);
 
-    /* === 1️⃣ OpenAI DALL·E === */
-    const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-    if (OPENAI_API_KEY) {
-      console.log("🟢 使用 OpenAI gpt-image-1 生成圖片...");
-      try {
-        const response = await fetch("https://api.openai.com/v1/images/generations", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${OPENAI_API_KEY}`,
-          },
-          body: JSON.stringify({
-            model: "gpt-image-1",
-            prompt,
-            size: "1024x1024",
-          }),
-        });
+    /* 🚫 已關閉 OpenAI（暫停使用 DALL·E） */
+    console.log("⏩ 已略過 OpenAI，改用 Gemini / Hugging Face 引擎。");
 
-        const data = await response.json();
-        if (data?.data?.[0]?.url) {
-          console.log("✅ OpenAI 成功生成圖片");
-          return res.json({
-            source: "openai",
-            image: data.data[0].url,
-            download: data.data[0].url,
-          });
-        }
-      } catch (err) {
-        console.error("💥 OpenAI 錯誤：", err.message);
-      }
-    }
-
-    /* === 2️⃣ Gemini === */
+    /* === 1️⃣ Gemini === */
     const GEMINI_IMAGE_KEY = process.env.GEMINI_API_KEY;
     const MODEL_IMAGE = process.env.GEMINI_MODEL || "gemini-2.0-flash-exp";
+
     if (GEMINI_IMAGE_KEY) {
       console.log("🟡 使用 Gemini 生成圖片...");
       try {
@@ -142,7 +114,7 @@ app.post("/api/image", async (req, res) => {
               role: "user",
               parts: [
                 {
-                  text: `請生成一張圖片：「${prompt}」。請以 base64 編碼輸出，不要附文字。`,
+                  text: `請生成一張圖片：「${prompt}」。請以 base64 編碼輸出，不要附任何文字說明。`,
                 },
               ],
             },
@@ -160,13 +132,14 @@ app.post("/api/image", async (req, res) => {
           data?.candidates?.[0]?.content?.parts?.[0]?.inline_data?.data ||
           data?.candidates?.[0]?.content?.parts?.[0]?.text;
 
-        // 🧹 清理可能有換行的 base64
+        // 🧹 清除多餘空格 / 換行
         base64Image = base64Image?.replace(/[\r\n\s]/g, "");
 
         if (base64Image && /^[A-Za-z0-9+/]+={0,2}$/.test(base64Image)) {
           const imageBuffer = Buffer.from(base64Image, "base64");
           const folderPath = path.join(process.cwd(), "generated");
           if (!fs.existsSync(folderPath)) fs.mkdirSync(folderPath);
+
           const fileName = `inspiro-${Date.now()}.png`;
           const filePath = path.join(folderPath, fileName);
           fs.writeFileSync(filePath, imageBuffer);
@@ -187,7 +160,7 @@ app.post("/api/image", async (req, res) => {
       }
     }
 
-    /* === 3️⃣ Hugging Face (備援免費方案) === */
+    /* === 2️⃣ Hugging Face (備援免費方案) === */
     const HF_TOKEN = process.env.HF_TOKEN;
     if (HF_TOKEN) {
       console.log("🔵 使用 Hugging Face 生成圖片...");
@@ -208,6 +181,7 @@ app.post("/api/image", async (req, res) => {
 
         const folderPath = path.join(process.cwd(), "generated");
         if (!fs.existsSync(folderPath)) fs.mkdirSync(folderPath);
+
         const fileName = `inspiro-${Date.now()}.png`;
         const filePath = path.join(folderPath, fileName);
         fs.writeFileSync(filePath, imageBuffer);
