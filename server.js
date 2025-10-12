@@ -54,22 +54,36 @@ app.get("/", (_req, res) => {
   res.send(`✅ Inspiro AI Server 已啟動（模型：${MODEL}）`);
 });
 
-/* === 🤖 Gemini 對話 API（文字生成）=== */
+/* === 🤖 Gemini 對話 API（文字）=== */
 app.post("/api/generate", async (req, res) => {
   try {
     const { message } = req.body || {};
-    if (!GEMINI_API_KEY) return res.status(500).json({ reply: "⚠️ Inspiro AI 金鑰未設定。" });
-    if (!message || !message.trim()) return res.status(400).json({ reply: "⚠️ 請輸入內容。" });
+    if (!GEMINI_API_KEY)
+      return res.status(500).json({ reply: "⚠️ Inspiro AI 金鑰未設定。" });
+    if (!message || !message.trim())
+      return res.status(400).json({ reply: "⚠️ 請輸入對話內容。" });
 
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${GEMINI_API_KEY}`;
     const payload = {
-      contents: [{ role: "user", parts: [{ text: `${INSPRIRO_SYSTEM_PROMPT}\n\n使用者訊息：${message}` }] }],
-      generationConfig: { temperature: 0.9, maxOutputTokens: 800 },
+      contents: [
+        {
+          role: "user",
+          parts: [{ text: `${INSPRIRO_SYSTEM_PROMPT}\n\n使用者訊息：${message}` }],
+        },
+      ],
+      generationConfig: { temperature: 0.8, maxOutputTokens: 800 },
     };
 
-    const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+    const r = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
     const data = await r.json();
-    const aiText = data?.candidates?.[0]?.content?.parts?.[0]?.text || "🤖 Inspiro AI 暫時沒有回覆內容。";
+    const aiText =
+      data?.candidates?.[0]?.content?.parts?.[0]?.text ||
+      "🤖 Inspiro AI 暫時沒有回覆內容。";
     res.json({ reply: aiText });
   } catch (err) {
     console.error("💥 Inspiro AI 對話錯誤：", err);
@@ -96,36 +110,60 @@ function saveImageReturnUrl(buffer, req) {
 async function generateWithHF(prompt, options = {}) {
   const HF_TOKEN = process.env.HF_TOKEN;
   if (!HF_TOKEN) return null;
-  const { negative_prompt = "", num_inference_steps = 30, guidance_scale = 7.5, seed } = options;
+  const {
+    negative_prompt = "",
+    num_inference_steps = 30,
+    guidance_scale = 7.5,
+    seed,
+  } = options;
+
   const model = "stabilityai/stable-diffusion-xl-base-1.0";
   const body = {
     inputs: prompt,
-    parameters: { negative_prompt, num_inference_steps, guidance_scale, ...(seed ? { seed } : {}) },
+    parameters: {
+      negative_prompt,
+      num_inference_steps,
+      guidance_scale,
+      ...(seed ? { seed } : {}),
+    },
   };
-  const resp = await fetch(`https://api-inference.huggingface.co/models/${model}`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${HF_TOKEN}`, "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+
+  const resp = await fetch(
+    `https://api-inference.huggingface.co/models/${model}`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${HF_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    }
+  );
   if (!resp.ok) throw new Error(`HF API Error: ${resp.status}`);
   const arrayBuffer = await resp.arrayBuffer();
   return Buffer.from(arrayBuffer);
 }
 
-/* === 🧠 智慧語意分析 API === */
+/* === 🧠 智慧語意分析 API（升級版）=== */
 app.post("/api/analyze", async (req, res) => {
   const { message } = req.body;
   try {
     const prompt = `
-你是一個輸入意圖分析助手，請判斷使用者輸入是否為「要生成圖片」或「一般對話」。
-若要生成圖片，請提供主題與風格。
-回傳 JSON，例如：
-{
-  "type": "image",
-  "topic": "貓",
-  "style": "黑金寫實",
-  "emotion": "優雅"
-}
+你是一個「輸入意圖分類助手」，請分析使用者想要什麼：
+- 若他說「生成、畫、圖、照片、image、設計、illustration」等相關字眼，
+  回覆：
+  {
+    "type": "image",
+    "topic": "貓、風景、人像等主題",
+    "style": "寫實、動漫、黑金精品等風格",
+    "emotion": "優雅、科技感、神秘等氛圍"
+  }
+
+- 若不是圖片需求（如問問題、請解釋、聊對話），
+  回覆：
+  { "type": "text" }
+
+請務必輸出標準 JSON，禁止多餘文字。
 使用者輸入：${message}
 `;
 
@@ -133,18 +171,24 @@ app.post("/api/analyze", async (req, res) => {
     const response = await fetch(apiUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: prompt }] }] }),
+      body: JSON.stringify({
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        generationConfig: { temperature: 0.3 },
+      }),
     });
 
     const data = await response.json();
+    let raw = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
     let result;
     try {
-      result = JSON.parse(data.candidates?.[0]?.content?.parts?.[0]?.text || "{}");
+      const jsonStr = raw.match(/\{[\s\S]*\}/)?.[0];
+      result = JSON.parse(jsonStr);
     } catch {
       result = { type: "text" };
     }
     if (!result.type) result.type = "text";
-    console.log("🧩 AI 分析結果：", result);
+
+    console.log("🧩 分析結果：", result);
     res.json(result);
   } catch (err) {
     console.error("❌ /api/analyze 錯誤：", err);
@@ -156,15 +200,16 @@ app.post("/api/analyze", async (req, res) => {
 app.post("/api/image-smart", async (req, res) => {
   const { message } = req.body;
   try {
-    // 1️⃣ 呼叫分析 API
-    const analyzeRes = await fetch(`${req.protocol}://${req.get("host")}/api/analyze`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message }),
-    });
+    const analyzeRes = await fetch(
+      `${req.protocol}://${req.get("host")}/api/analyze`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message }),
+      }
+    );
     const analysis = await analyzeRes.json();
 
-    // 2️⃣ 組合最終提示詞
     const finalPrompt = `
 Generate a high-quality image of ${analysis.topic || "subject"},
 style: ${analysis.style || "luxury black-gold aesthetic"},
@@ -173,13 +218,17 @@ high detail, soft glowing light, 3D glossy texture, ultra-realistic, 4K.
 `;
 
     console.log("🎨 最終提示詞：", finalPrompt);
-
-    // 3️⃣ 呼叫 Hugging Face 生成
-    const buffer = await generateWithHF(finalPrompt, { num_inference_steps: 30, guidance_scale: 7.5 });
+    const buffer = await generateWithHF(finalPrompt, {
+      num_inference_steps: 30,
+      guidance_scale: 7.5,
+    });
     const { downloadUrl } = saveImageReturnUrl(buffer, req);
     const base64 = buffer.toString("base64");
-
-    res.json({ imageBase64: `data:image/png;base64,${base64}`, imageUrl: downloadUrl, usedPrompt: finalPrompt });
+    res.json({
+      imageBase64: `data:image/png;base64,${base64}`,
+      imageUrl: downloadUrl,
+      usedPrompt: finalPrompt,
+    });
   } catch (err) {
     console.error("❌ /api/image-smart 錯誤：", err);
     res.status(500).json({ error: "生成失敗" });
@@ -223,7 +272,7 @@ app.listen(PORT, () => {
   console.log("🌍 狀態檢查：AI 模型 =", MODEL);
 });
 
-/* === 💤 Railway 保活 === */
+/* === 💤 防止 Railway 自動休眠 === */
 setInterval(async () => {
   try {
     await fetch("https://inspiro-ai-server-production.up.railway.app/");
