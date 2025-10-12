@@ -37,6 +37,7 @@ app.use(passport.session());
 /* === 🧩 Gemini AI 對話設定 === */
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const MODEL = process.env.GEMINI_MODEL || "gemini-2.0-flash";
+
 const INSPRIRO_SYSTEM_PROMPT = `
 你是 Inspiro AI，一個高級靈感創作助理。
 請注意：
@@ -54,6 +55,7 @@ app.get("/", (req, res) => {
 app.post("/api/generate", async (req, res) => {
   try {
     const { message } = req.body;
+
     if (!GEMINI_API_KEY) {
       return res.status(500).json({ reply: "⚠️ Inspiro AI 金鑰未設定。" });
     }
@@ -89,11 +91,18 @@ app.post("/api/image", async (req, res) => {
   try {
     let { prompt } = req.body;
 
-    // 🧩 防呆：若未輸入主題，自動補預設
+    // 🧩 防呆處理
     if (!prompt || prompt.trim().length < 2) {
       console.warn("⚠️ 未提供 prompt，自動使用預設主題。");
       prompt = "AI 藝術風格圖，主題為流動的光與創意靈感，精品風格";
     }
+
+    // 🪄 自動添加黑金精品風格描述
+    const styledPrompt = `
+主題：${prompt}
+請生成一張畫質高、構圖清晰、黑金精品風格的圖像。
+整體風格為明亮科技感、奢華高端、立體光影、乾淨背景。
+`;
 
     console.log(`🎨 開始生成圖片：「${prompt}」`);
     console.log("⏩ 已略過 OpenAI，改用 Gemini / Hugging Face 引擎。");
@@ -112,7 +121,7 @@ app.post("/api/image", async (req, res) => {
               role: "user",
               parts: [
                 {
-                  text: `請生成一張圖片：「${prompt}」。請以 base64 編碼輸出，不要附任何文字說明。`,
+                  text: `請生成一張圖片：「${styledPrompt}」。請以 base64 編碼輸出，不要附任何文字說明。`,
                 },
               ],
             },
@@ -169,7 +178,7 @@ app.post("/api/image", async (req, res) => {
             Authorization: `Bearer ${HF_TOKEN}`,
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({ inputs: prompt }),
+          body: JSON.stringify({ inputs: styledPrompt }),
         });
 
         const arrayBuffer = await response.arrayBuffer();
