@@ -3,7 +3,7 @@ import express from "express";
 import cors from "cors";
 import bodyParser from "body-parser";
 import session from "express-session";
-import MemoryStore from "memorystore";
+import memorystore from "memorystore";               // ✅ 正確使用 memorystore 的 default 匯入
 import passport from "passport";
 import { Strategy as GoogleStrategy } from "passport-google-oauth20";
 import { Strategy as FacebookStrategy } from "passport-facebook";
@@ -24,12 +24,12 @@ app.use((req, res, next) => {
   next();
 });
 
-/* === 🧠 Session 設定（使用 MemoryStore 改良版）=== */
-const Memorystore = MemoryStore(session);
+/* === 🧠 Session 設定（MemoryStore）=== */
+const MemoryStore = memorystore(session);
 app.use(
   session({
-    cookie: { maxAge: 86400000 }, // 1 天
-    store: new Memorystore({ checkPeriod: 86400000 }),
+    cookie: { maxAge: 24 * 60 * 60 * 1000 },           // 1 天
+    store: new MemoryStore({ checkPeriod: 24 * 60 * 60 * 1000 }),
     secret: process.env.SESSION_SECRET || "inspiro-secret",
     resave: false,
     saveUninitialized: false,
@@ -38,10 +38,9 @@ app.use(
 app.use(passport.initialize());
 app.use(passport.session());
 
-/* === 🧩 Gemini AI 對話設定 === */
+/* === 🧩 Gemini 對話設定 === */
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const MODEL = process.env.GEMINI_MODEL || "gemini-2.0-flash";
-
 const INSPRIRO_SYSTEM_PROMPT = `
 你是 Inspiro AI，一個高級靈感創作助理。
 請注意：
@@ -51,26 +50,25 @@ const INSPRIRO_SYSTEM_PROMPT = `
 `;
 
 /* === 🌐 根路徑測試 === */
-app.get("/", (req, res) => {
+app.get("/", (_req, res) => {
   res.send(`✅ Inspiro AI Server 已啟動（模型：${MODEL}）`);
 });
 
-/* === 🤖 Gemini 對話 API === */
+/* === 🤖 Gemini 對話 API（文字）=== */
 app.post("/api/generate", async (req, res) => {
   try {
-    const { message } = req.body;
-
+    const { message } = req.body || {};
     if (!GEMINI_API_KEY) {
       return res.status(500).json({ reply: "⚠️ Inspiro AI 金鑰未設定。" });
+    }
+    if (!message || !message.trim()) {
+      return res.status(400).json({ reply: "⚠️ 請輸入對話內容。" });
     }
 
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${GEMINI_API_KEY}`;
     const payload = {
       contents: [
-        {
-          role: "user",
-          parts: [{ text: `${INSPRIRO_SYSTEM_PROMPT}\n\n使用者訊息：${message}` }],
-        },
+        { role: "user", parts: [{ text: `${INSPRIRO_SYSTEM_PROMPT}\n\n使用者訊息：${message}` }] },
       ],
       generationConfig: { temperature: 0.9, maxOutputTokens: 800 },
     };
@@ -85,7 +83,6 @@ app.post("/api/generate", async (req, res) => {
     const aiText =
       data?.candidates?.[0]?.content?.parts?.[0]?.text ||
       "🤖 Inspiro AI 暫時沒有回覆內容。";
-
     res.json({ reply: aiText });
   } catch (err) {
     console.error("💥 Inspiro AI 對話錯誤：", err);
@@ -93,173 +90,172 @@ app.post("/api/generate", async (req, res) => {
   }
 });
 
-/* === 🎨 Inspiro AI 圖片生成 API（Gemini + Hugging Face）=== */
+/* === 🛠️ 小工具：確保資料夾存在 === */
+function ensureDir(dirPath) {
+  if (!fs.existsSync(dirPath)) fs.mkdirSync(dirPath);
+}
+
+/* === 🛠️ 小工具：建檔並回傳下載網址 === */
+function saveImageReturnUrl(buffer, req) {
+  const folderPath = path.join(process.cwd(), "generated");
+  ensureDir(folderPath);
+  const fileName = `inspiro-${Date.now()}.png`;
+  const filePath = path.join(folderPath, fileName);
+  fs.writeFileSync(filePath, buffer);
+  const base = `${req.protocol}://${req.get("host")}`;
+  const downloadUrl = `${base}/generated/${fileName}`;
+  return { fileName, downloadUrl };
+}
+
+/* === 🖼️ 圖像生成：Hugging Face（主要路徑，最貼近指令） === */
+async function generateWithHF(prompt, options = {}) {
+  const HF_TOKEN = process.env.HF_TOKEN;
+  if (!HF_TOKEN) return null;
+
+  // 常見、易理解的參數（不同模型支援度略有差異，但大多可用）
+  const {
+    negative_prompt = "",
+    num_inference_steps = 30,
+    guidance_scale = 7.5,
+    seed,                     // 可不給
+  } = options;
+
+  const model = "stabilityai/stable-diffusion-xl-base-1.0";
+  const body = {
+    inputs: prompt,           // ✅ 只使用使用者指令，不強加風格
+    parameters: {
+      negative_prompt,
+      num_inference_steps,
+      guidance_scale,
+      ...(seed ? { seed } : {}),
+    },
+  };
+
+  const resp = await fetch(`https://api-inference.huggingface.co/models/${model}`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${HF_TOKEN}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!resp.ok) {
+    const errText = await resp.text().catch(() => "");
+    throw new Error(`HF API Error: ${resp.status} ${errText}`);
+  }
+  const arrayBuffer = await resp.arrayBuffer();
+  return Buffer.from(arrayBuffer);
+}
+
+/* === 🖼️ 圖像生成：Gemini（實驗性，若回傳非圖片會自動跳過） === */
+async function tryGenerateWithGemini(prompt) {
+  const GEMINI_KEY = process.env.GEMINI_API_KEY;
+  const MODEL_IMAGE = process.env.GEMINI_MODEL || "gemini-2.0-flash-exp";
+  if (!GEMINI_KEY) return null;
+
+  const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_IMAGE}:generateContent?key=${GEMINI_KEY}`;
+  const payload = {
+    contents: [{ role: "user", parts: [{ text: `請生成一張圖片：「${prompt}」。請以 base64 編碼輸出。` }] }],
+  };
+
+  const r = await fetch(apiUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  const data = await r.json();
+  let base64Image =
+    data?.candidates?.[0]?.content?.parts?.[0]?.inline_data?.data ||
+    data?.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!base64Image) return null;
+
+  base64Image = base64Image.replace(/[\r\n\s]/g, "");
+  // 確認真的是 Base64
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(base64Image)) return null;
+
+  return Buffer.from(base64Image, "base64");
+}
+
+/* === 🎨 圖片生成 API（嚴格依照你的指令）=== */
 app.post("/api/image", async (req, res) => {
   try {
-    let { prompt } = req.body;
+    let { prompt, negative, steps, guidance, seed } = req.body || {};
 
-    // 🧩 防呆：若未輸入主題，自動補預設
+    // 防呆
     if (!prompt || prompt.trim().length < 2) {
-      console.warn("⚠️ 未提供 prompt，自動使用預設主題。");
-      prompt = "AI 藝術風格圖，主題為流動的光與創意靈感，精品風格";
+      return res.status(400).json({ error: "⚠️ 請提供清楚的圖片描述內容。" });
     }
 
-    // 💎 自動加上精品風格描述
-    const styledPrompt = `
-主題：${prompt}
-請生成一張畫質高、黑金精品風格、明亮科技感、立體光影、乾淨背景的圖片。
-`;
+    console.log(`🎨 生成圖片：${prompt}`);
 
-    console.log(`🎨 開始生成圖片：「${prompt}」`);
-    console.log("⏩ 使用 Gemini / Hugging Face 引擎。");
-
-    /* === 1️⃣ Gemini 生成圖片 === */
-    const GEMINI_IMAGE_KEY = process.env.GEMINI_API_KEY;
-    const MODEL_IMAGE = process.env.GEMINI_MODEL || "gemini-2.0-flash-exp";
-
-    if (GEMINI_IMAGE_KEY) {
-      console.log("🟡 使用 Gemini 生成圖片...");
-      try {
-        const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_IMAGE}:generateContent?key=${GEMINI_IMAGE_KEY}`;
-        const payload = {
-          contents: [
-            {
-              role: "user",
-              parts: [
-                {
-                  text: `請生成一張圖片：「${styledPrompt}」。請以 base64 編碼輸出，不要附任何文字說明。`,
-                },
-              ],
-            },
-          ],
-        };
-
-        const response = await fetch(apiUrl, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
-
-        const data = await response.json();
-        let base64Image =
-          data?.candidates?.[0]?.content?.parts?.[0]?.inline_data?.data ||
-          data?.candidates?.[0]?.content?.parts?.[0]?.text;
-
-        base64Image = base64Image?.replace(/[\r\n\s]/g, "");
-
-        if (base64Image && /^[A-Za-z0-9+/]+={0,2}$/.test(base64Image)) {
-          const imageBuffer = Buffer.from(base64Image, "base64");
-          const folderPath = path.join(process.cwd(), "generated");
-          if (!fs.existsSync(folderPath)) fs.mkdirSync(folderPath);
-
-          const fileName = `inspiro-${Date.now()}.png`;
-          const filePath = path.join(folderPath, fileName);
-          fs.writeFileSync(filePath, imageBuffer);
-
-          const downloadUrl = `${req.protocol}://${req.get("host")}/generated/${fileName}`;
-          console.log("✅ Gemini 成功生成圖片並儲存：", fileName);
-
-          return res.json({
-            source: "gemini",
-            image: `data:image/png;base64,${base64Image}`,
-            download: downloadUrl,
-          });
-        } else {
-          console.warn("⚠️ Gemini 回傳非圖片內容");
-        }
-      } catch (err) {
-        console.error("💥 Gemini 圖片生成錯誤：", err.message);
-      }
+    // 1) 先試 Gemini（可能回不出圖，成功就用）
+    let buffer = null;
+    try {
+      buffer = await tryGenerateWithGemini(prompt);
+      if (buffer) console.log("🟡 Gemini 生成成功（使用其結果）");
+    } catch (e) {
+      console.warn("Gemini 生成失敗，改用 Hugging Face：", e.message);
     }
 
-    /* === 2️⃣ Hugging Face 備援生成 === */
-    const HF_TOKEN = process.env.HF_TOKEN;
-    if (HF_TOKEN) {
-      console.log("🔵 使用 Hugging Face 生成圖片...");
-      try {
-        const model = "stabilityai/stable-diffusion-xl-base-1.0";
-        const response = await fetch(
-          `https://api-inference.huggingface.co/models/${model}`,
-          {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${HF_TOKEN}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({ inputs: styledPrompt }),
-          }
-        );
-
-        const arrayBuffer = await response.arrayBuffer();
-        const imageBuffer = Buffer.from(arrayBuffer);
-        const base64Image = imageBuffer.toString("base64");
-
-        const folderPath = path.join(process.cwd(), "generated");
-        if (!fs.existsSync(folderPath)) fs.mkdirSync(folderPath);
-
-        const fileName = `inspiro-${Date.now()}.png`;
-        const filePath = path.join(folderPath, fileName);
-        fs.writeFileSync(filePath, imageBuffer);
-
-        const downloadUrl = `${req.protocol}://${req.get("host")}/generated/${fileName}`;
-        console.log("✅ Hugging Face 成功生成圖片：", fileName);
-
-        return res.json({
-          source: "huggingface",
-          image: `data:image/png;base64,${base64Image}`,
-          download: downloadUrl,
-        });
-      } catch (err) {
-        console.error("💥 Hugging Face 錯誤：", err.message);
-      }
+    // 2) 再用 Hugging Face（主要路徑，最穩）
+    if (!buffer) {
+      buffer = await generateWithHF(prompt, {
+        negative_prompt: negative || "",
+        num_inference_steps: Number(steps) || 30,
+        guidance_scale: Number(guidance) || 7.5,
+        seed, // 可選
+      });
+      console.log("🔵 Hugging Face 生成成功");
     }
 
-    /* === 全部失敗 === */
-    console.error("❌ Inspiro AI 所有引擎皆失敗。");
-    res.status(500).json({ error: "⚠️ Inspiro AI 無法生成圖片，請稍後再試。" });
+    // 存檔並回傳
+    const { downloadUrl } = saveImageReturnUrl(buffer, req);
+    const base64 = buffer.toString("base64");
+
+    return res.json({
+      ok: true,
+      imageBase64: `data:image/png;base64,${base64}`, // ✅ 前端直接預覽
+      imageUrl: downloadUrl,                           // ✅ 點擊即可下載
+      engine: buffer ? "huggingface-or-gemini" : "unknown",
+      message: "✅ 成功生成圖片",
+    });
   } catch (err) {
-    console.error("💥 Inspiro AI 圖片生成系統錯誤：", err.message);
-    res.status(500).json({ error: "⚠️ Inspiro AI 系統錯誤" });
+    console.error("💥 圖片生成錯誤：", err);
+    return res.status(500).json({ error: "⚠️ Inspiro AI 無法生成圖片，請稍後再試。" });
   }
 });
 
-/* === 📁 靜態資料夾：提供圖片下載（支援跨來源 + MIME 修正）=== */
-app.use("/generated", (req, res) => {
-  try {
-    const filePath = path.join(process.cwd(), "generated", decodeURIComponent(req.path));
-    if (!fs.existsSync(filePath)) return res.status(404).send("❌ 圖片不存在");
-
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
-    res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-    res.setHeader("Content-Type", "image/png");
-
-    res.sendFile(filePath);
-  } catch (err) {
-    console.error("⚠️ 圖片回傳錯誤：", err);
-    res.status(500).send("⚠️ Inspiro AI 圖片提供發生錯誤");
-  }
-});
+/* === 📁 靜態資料夾：提供圖片下載（CORS + MIME）=== */
+app.use(
+  "/generated",
+  express.static("generated", {
+    setHeaders: (res) => {
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+      res.setHeader("Content-Type", "image/png");
+    },
+  })
+);
 
 /* === 🧹 自動清理舊圖片（每 3 小時清理超過 3 小時的檔案）=== */
 setInterval(() => {
   const folderPath = path.join(process.cwd(), "generated");
   const THREE_HOURS = 3 * 60 * 60 * 1000;
-
   if (!fs.existsSync(folderPath)) return;
 
-  const files = fs.readdirSync(folderPath);
   const now = Date.now();
-
-  files.forEach((file) => {
-    const filePath = path.join(folderPath, file);
-    const stats = fs.statSync(filePath);
-    if (now - stats.mtimeMs > THREE_HOURS) {
-      fs.unlinkSync(filePath);
-      console.log(`🧹 自動清理：刪除舊檔案 ${file}`);
-    }
-  });
+  for (const file of fs.readdirSync(folderPath)) {
+    try {
+      const filePath = path.join(folderPath, file);
+      const stats = fs.statSync(filePath);
+      if (now - stats.mtimeMs > THREE_HOURS) {
+        fs.unlinkSync(filePath);
+        console.log(`🧹 自動清理：刪除舊檔案 ${file}`);
+      }
+    } catch {}
+  }
 }, 3 * 60 * 60 * 1000);
 
 /* === 🚀 啟動伺服器 === */
