@@ -1,5 +1,4 @@
-/* === 💎 Inspiro AI · GPT Ultra (完整版) === */
-
+/* === 💎 Inspiro AI · GPT Ultra (穩定版) === */
 import express from "express";
 import cors from "cors";
 import bodyParser from "body-parser";
@@ -20,26 +19,26 @@ app.use(
   session({
     cookie: { maxAge: 6 * 60 * 60 * 1000 },
     store: new MemoryStore({ checkPeriod: 6 * 60 * 60 * 1000 }),
-    secret: process.env.SESSION_SECRET || "inspiro-secret",
+    secret: process.env.SESSION_SECRET || "inspiro-ultra-secret",
     resave: false,
     saveUninitialized: true,
   })
 );
 
 /* === 🔑 環境變數 === */
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY; // 必填
-const HF_TOKEN = process.env.HF_TOKEN; // 必填 (圖片)
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const HF_TOKEN = process.env.HF_TOKEN;
 const MODEL = process.env.GEMINI_MODEL || "gemini-2.0-flash";
-const TAVILY_API_KEY = process.env.TAVILY_API_KEY || ""; // 選填 (Web 檢索)
+const TAVILY_API_KEY = process.env.TAVILY_API_KEY || "";
 
 /* === 🧾 系統提示：精品 AI 風格 === */
 const SYS_PROMPT = `
 你是「Inspiro AI」，一位優雅且具創意的精品級智能助理。
 請遵守：
-1️⃣ 回覆簡潔、溫潤、有美感。
-2️⃣ 若需產生圖片，請生成精準英文提示詞。
-3️⃣ 禁止提及「Google」、「Gemini」、「API」等技術字。
-4️⃣ 風格應帶有靈感與品味氣息。
+1️⃣ 回覆簡潔、有靈感且具品味。
+2️⃣ 若需生成圖片，請用精確英文提示詞。
+3️⃣ 禁止提及 Google、Gemini、API 等技術字。
+4️⃣ 所有回覆須自然流暢、有設計感。
 `;
 
 /* === 🧰 工具函式 === */
@@ -78,11 +77,15 @@ async function drawWithHF(prompt, options = {}) {
     body: JSON.stringify(body),
   });
 
-  if (!r.ok) throw new Error(`Hugging Face API 錯誤：${r.status}`);
+  if (!r.ok) {
+    const errText = await r.text();
+    throw new Error(`Hugging Face API 錯誤 (${r.status}): ${errText.slice(0, 100)}`);
+  }
+
   return Buffer.from(await r.arrayBuffer());
 }
 
-/* === 🌐 Web 檢索 (Tavily) === */
+/* === 🌐 Web 檢索 (Tavily，可選) === */
 async function webSearch(q) {
   if (!TAVILY_API_KEY) return "";
   try {
@@ -97,7 +100,7 @@ async function webSearch(q) {
     const d = await r.json();
     if (!d.results?.length) return "";
     const bullets = d.results.map((x) => `- ${x.title}: ${x.url}`).join("\n");
-    return `以下是相關的最新網頁：\n${bullets}`;
+    return `以下是網路上的相關資訊：\n${bullets}`;
   } catch {
     return "";
   }
@@ -120,7 +123,7 @@ app.get("/", (_req, res) => {
   res.send(`✅ Inspiro AI · GPT Ultra 正常運行（模型：${MODEL}）`);
 });
 
-/* === 🤖 主核心 API：自動判斷與生成 === */
+/* === 🤖 主核心 API：智能生成 === */
 app.post("/api/generate", async (req, res) => {
   try {
     const { message, imageOptions } = req.body || {};
@@ -129,21 +132,16 @@ app.post("/api/generate", async (req, res) => {
     if (!req.session.history) req.session.history = [];
     const history = req.session.history.slice(-6).map((x) => `${x.role}: ${x.text}`).join("\n");
 
-    /* === 判斷使用者意圖 === */
-    const isImage = /(畫|生成|圖片|插畫|海報|design|illustration|image)/i.test(message);
-    const isTranslate = /(翻譯|translate|成英文|to english)/i.test(message);
+    /* === 🔍 意圖判斷 === */
+    const isImage = /(畫|生成|圖片|插畫|海報|illustration|design|image)/i.test(message);
+    const isTranslate = /(翻譯|translate|to english|成英文)/i.test(message);
     const isSummary = /(摘要|總結|summary)/i.test(message);
     const isSearch = /(查詢|新聞|最近|最新|who|what|when|搜尋)/i.test(message);
 
-    /* === 圖像生成流程 === */
+    /* === 🖼️ 圖片生成模式 === */
     if (isImage) {
-      const promptBuilder = `
-${SYS_PROMPT}
-請將以下描述轉為簡潔、具體的英文繪圖提示詞（prompt）：
-使用者輸入：${message}
-`;
-
-      const genPrompt = await fetch(
+      const promptBuilder = `${SYS_PROMPT}\n請將以下描述轉為簡潔、具體的英文繪圖提示詞（prompt）：\n使用者輸入：${message}`;
+      const rPrompt = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${GEMINI_API_KEY}`,
         {
           method: "POST",
@@ -155,18 +153,42 @@ ${SYS_PROMPT}
         }
       );
 
-      const promptData = await genPrompt.json();
+      let dataPrompt;
+      try {
+        dataPrompt = await rPrompt.json();
+      } catch {
+        const raw = await rPrompt.text();
+        console.warn("⚠️ 無法解析 Gemini 回傳：", raw.slice(0, 100));
+        throw new Error("AI 回傳格式錯誤。");
+      }
+
       const englishPrompt =
-        promptData?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || message;
-      const finalPrompt = `${englishPrompt}, luxury black-gold aesthetic, ultra-detailed, 4K render`;
+        dataPrompt?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || message;
+      const finalPrompt = `${englishPrompt}, luxury black-gold aesthetic, cinematic glow, ultra-detailed, 4K render`;
 
-      const buffer = await drawWithHF(finalPrompt, imageOptions);
+      let buffer;
+      try {
+        buffer = await drawWithHF(finalPrompt, imageOptions);
+      } catch (err) {
+        console.error("🎨 Hugging Face 錯誤：", err);
+        // fallback 圖片
+        const fallback = fs.readFileSync(path.join(process.cwd(), "fallback.png"));
+        const fallbackUrl = saveImage(fallback, req);
+        return res.json({
+          ok: false,
+          mode: "image",
+          reply: "⚠️ Inspiro AI 圖片生成失敗，已顯示預設圖。",
+          imageUrl: fallbackUrl,
+          imageBase64: `data:image/png;base64,${fallback.toString("base64")}`,
+        });
+      }
+
       const url = saveImage(buffer, req);
-
       req.session.history.push({ role: "user", text: message });
       req.session.history.push({ role: "ai", text: "[image]" });
 
       return res.json({
+        ok: true,
         mode: "image",
         usedPrompt: finalPrompt,
         imageUrl: url,
@@ -174,19 +196,19 @@ ${SYS_PROMPT}
       });
     }
 
-    /* === 若需要搜尋 === */
+    /* === 🌐 若為搜尋型問題 === */
     const webNotes = isSearch ? await webSearch(message) : "";
 
-    /* === 一般文字生成 === */
+    /* === 💬 一般文字對話 === */
     const context = `
 ${SYS_PROMPT}
 
 最近對話節錄：
 ${history || "(無記錄)"}
 
-使用者：${message}
+使用者輸入：${message}
 ${isTranslate ? "請翻譯成英文。" : ""}
-${isSummary ? "請摘要重點，條列呈現。" : ""}
+${isSummary ? "請摘要重點並條列呈現。" : ""}
 ${webNotes ? `\n${webNotes}` : ""}
 `;
 
@@ -202,7 +224,15 @@ ${webNotes ? `\n${webNotes}` : ""}
       }
     );
 
-    const d = await r.json();
+    let d;
+    try {
+      d = await r.json();
+    } catch {
+      const raw = await r.text();
+      console.warn("⚠️ Gemini 回傳非 JSON：", raw.slice(0, 100));
+      return res.json({ mode: "error", reply: "⚠️ Inspiro AI 回覆格式錯誤。" });
+    }
+
     const reply =
       d?.candidates?.[0]?.content?.parts?.map((p) => p.text).join("\n").trim() ||
       "🤖 Inspiro AI 暫時沒有回覆內容。";
@@ -210,7 +240,12 @@ ${webNotes ? `\n${webNotes}` : ""}
     req.session.history.push({ role: "user", text: message });
     req.session.history.push({ role: "ai", text: reply });
 
-    res.json({ mode: "text", reply, source: isSearch ? "web+ai" : "chat" });
+    res.json({
+      ok: true,
+      mode: "text",
+      reply,
+      source: isSearch ? "web+ai" : "chat",
+    });
   } catch (err) {
     console.error("💥 /api/generate 錯誤：", err);
     res.status(500).json({
