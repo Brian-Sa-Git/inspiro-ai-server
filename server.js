@@ -38,9 +38,11 @@ app.use(
 app.use(passport.initialize());
 app.use(passport.session());
 
-/* === 🧩 Gemini 對話設定 === */
+/* === 🧩 Gemini 設定 === */
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const MODEL = process.env.GEMINI_MODEL || "gemini-2.0-flash";
+const HF_TOKEN = process.env.HF_TOKEN;
+
 const INSPRIRO_SYSTEM_PROMPT = `
 你是 Inspiro AI，一個高級靈感創作助理。
 請注意：
@@ -54,13 +56,27 @@ app.get("/", (_req, res) => {
   res.send(`✅ Inspiro AI Server 已啟動（模型：${MODEL}）`);
 });
 
-/* === 🤖 Gemini 對話 API（文字）=== */
+/* === 🧠 工具函式 === */
+function ensureDir(dirPath) {
+  if (!fs.existsSync(dirPath)) fs.mkdirSync(dirPath);
+}
+function saveImageReturnUrl(buffer, req) {
+  const folderPath = path.join(process.cwd(), "generated");
+  ensureDir(folderPath);
+  const fileName = `inspiro-${Date.now()}.png`;
+  const filePath = path.join(folderPath, fileName);
+  fs.writeFileSync(filePath, buffer);
+  const base = `${req.protocol}://${req.get("host")}`;
+  return { downloadUrl: `${base}/generated/${fileName}` };
+}
+
+/* === 🤖 文字生成 API === */
 app.post("/api/generate", async (req, res) => {
   try {
     const { message } = req.body || {};
     if (!GEMINI_API_KEY)
       return res.status(500).json({ reply: "⚠️ Inspiro AI 金鑰未設定。" });
-    if (!message || !message.trim())
+    if (!message?.trim())
       return res.status(400).json({ reply: "⚠️ 請輸入對話內容。" });
 
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${GEMINI_API_KEY}`;
@@ -81,89 +97,28 @@ app.post("/api/generate", async (req, res) => {
     });
 
     const data = await r.json();
-    const aiText =
+    const reply =
       data?.candidates?.[0]?.content?.parts?.[0]?.text ||
       "🤖 Inspiro AI 暫時沒有回覆內容。";
-    res.json({ reply: aiText });
+    res.json({ reply });
   } catch (err) {
-    console.error("💥 Inspiro AI 對話錯誤：", err);
+    console.error("💥 /api/generate 錯誤：", err);
     res.status(500).json({ reply: "⚠️ Inspiro AI 發生暫時錯誤。" });
   }
 });
 
-/* === 🛠️ 工具函式 === */
-function ensureDir(dirPath) {
-  if (!fs.existsSync(dirPath)) fs.mkdirSync(dirPath);
-}
-function saveImageReturnUrl(buffer, req) {
-  const folderPath = path.join(process.cwd(), "generated");
-  ensureDir(folderPath);
-  const fileName = `inspiro-${Date.now()}.png`;
-  const filePath = path.join(folderPath, fileName);
-  fs.writeFileSync(filePath, buffer);
-  const base = `${req.protocol}://${req.get("host")}`;
-  const downloadUrl = `${base}/generated/${fileName}`;
-  return { fileName, downloadUrl };
-}
-
-/* === 🖼️ Hugging Face 圖像生成 === */
-async function generateWithHF(prompt, options = {}) {
-  const HF_TOKEN = process.env.HF_TOKEN;
-  if (!HF_TOKEN) return null;
-  const {
-    negative_prompt = "",
-    num_inference_steps = 30,
-    guidance_scale = 7.5,
-    seed,
-  } = options;
-
-  const model = "stabilityai/stable-diffusion-xl-base-1.0";
-  const body = {
-    inputs: prompt,
-    parameters: {
-      negative_prompt,
-      num_inference_steps,
-      guidance_scale,
-      ...(seed ? { seed } : {}),
-    },
-  };
-
-  const resp = await fetch(
-    `https://api-inference.huggingface.co/models/${model}`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${HF_TOKEN}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
-    }
-  );
-  if (!resp.ok) throw new Error(`HF API Error: ${resp.status}`);
-  const arrayBuffer = await resp.arrayBuffer();
-  return Buffer.from(arrayBuffer);
-}
-
-/* === 🧠 智慧語意分析 API（升級版）=== */
+/* === 🧠 智慧語意分析 === */
 app.post("/api/analyze", async (req, res) => {
-  const { message } = req.body;
+  const { message } = req.body || {};
   try {
     const prompt = `
-你是一個「輸入意圖分類助手」，請分析使用者想要什麼：
-- 若他說「生成、畫、圖、照片、image、設計、illustration」等相關字眼，
-  回覆：
-  {
-    "type": "image",
-    "topic": "貓、風景、人像等主題",
-    "style": "寫實、動漫、黑金精品等風格",
-    "emotion": "優雅、科技感、神秘等氛圍"
-  }
+你是一個「意圖分類助手」，請分析使用者是否要「生成圖片」或「一般對話」。
+- 若包含「畫、生成、圖片、設計、風景、人像、AI圖、photo、illustration」→ type 為 "image"
+- 否則 type 為 "text"
 
-- 若不是圖片需求（如問問題、請解釋、聊對話），
-  回覆：
-  { "type": "text" }
+輸出 JSON：
+{ "type": "image" } 或 { "type": "text" }
 
-請務必輸出標準 JSON，禁止多餘文字。
 使用者輸入：${message}
 `;
 
@@ -173,110 +128,134 @@ app.post("/api/analyze", async (req, res) => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         contents: [{ role: "user", parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 0.3 },
+        generationConfig: { temperature: 0.2 },
       }),
     });
 
     const data = await response.json();
-    let raw = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
-    let result;
-    try {
-      const jsonStr = raw.match(/\{[\s\S]*\}/)?.[0];
-      result = JSON.parse(jsonStr);
-    } catch {
-      result = { type: "text" };
-    }
-    if (!result.type) result.type = "text";
+    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+    const type = text.toLowerCase().includes("image") ? "image" : "text";
 
-    console.log("🧩 分析結果：", result);
-    res.json(result);
+    console.log(`🧩 分析結果：「${message}」→ ${type}`);
+    res.json({ type });
   } catch (err) {
     console.error("❌ /api/analyze 錯誤：", err);
     res.status(500).json({ type: "text" });
   }
 });
 
+/* === 🎨 Hugging Face 圖像生成 === */
+async function generateWithHF(prompt, options = {}) {
+  if (!HF_TOKEN) throw new Error("HF_TOKEN 未設定。");
+  const model = "stabilityai/stable-diffusion-xl-base-1.0";
+
+  const body = {
+    inputs: prompt,
+    parameters: {
+      num_inference_steps: options.num_inference_steps || 30,
+      guidance_scale: options.guidance_scale || 7.5,
+    },
+  };
+
+  const resp = await fetch(`https://api-inference.huggingface.co/models/${model}`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${HF_TOKEN}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!resp.ok) throw new Error(`HF API Error: ${resp.status}`);
+  return Buffer.from(await resp.arrayBuffer());
+}
+
 /* === 🎨 智慧圖片生成 API === */
 app.post("/api/image-smart", async (req, res) => {
-  const { message } = req.body;
+  const { message } = req.body || {};
   try {
-    const analyzeRes = await fetch(
-      `${req.protocol}://${req.get("host")}/api/analyze`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message }),
-      }
-    );
-    const analysis = await analyzeRes.json();
+    console.log("🎨 使用者請求圖片：", message);
+    const analysis = await fetch(`${req.protocol}://${req.get("host")}/api/analyze`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message }),
+    }).then((r) => r.json());
 
-    const finalPrompt = `
-Generate a high-quality image of ${analysis.topic || "subject"},
-style: ${analysis.style || "luxury black-gold aesthetic"},
-mood: ${analysis.emotion || "elegant and cinematic"},
-high detail, soft glowing light, 3D glossy texture, ultra-realistic, 4K.
+    if (analysis.type !== "image")
+      return res.status(400).json({ error: "不是圖片請求" });
+
+    const prompt = `
+${message}, luxury black-gold aesthetic, glowing light,
+3D glossy texture, cinematic lighting, ultra-realistic, 4K render
 `;
 
-    console.log("🎨 最終提示詞：", finalPrompt);
-    const buffer = await generateWithHF(finalPrompt, {
-      num_inference_steps: 30,
-      guidance_scale: 7.5,
-    });
+    const buffer = await generateWithHF(prompt);
     const { downloadUrl } = saveImageReturnUrl(buffer, req);
-    const base64 = buffer.toString("base64");
     res.json({
-      imageBase64: `data:image/png;base64,${base64}`,
+      ok: true,
+      usedPrompt: prompt,
+      imageBase64: `data:image/png;base64,${buffer.toString("base64")}`,
       imageUrl: downloadUrl,
-      usedPrompt: finalPrompt,
     });
   } catch (err) {
-    console.error("❌ /api/image-smart 錯誤：", err);
-    res.status(500).json({ error: "生成失敗" });
+    console.error("💥 /api/image-smart 錯誤：", err);
+    res.status(500).json({ error: "⚠️ Inspiro AI 無法生成圖片。" });
   }
 });
 
-/* === 📁 靜態資料夾 === */
+/* === 📁 靜態檔案（強化版）=== */
 app.use(
   "/generated",
   express.static("generated", {
-    setHeaders: (res) => {
+    setHeaders: (res, filePath) => {
       res.setHeader("Access-Control-Allow-Origin", "*");
+      res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type, Range");
       res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
-      res.setHeader("Content-Type", "image/png");
+      res.setHeader("Cross-Origin-Embedder-Policy", "unsafe-none");
+      res.setHeader("Referrer-Policy", "no-referrer-when-downgrade");
+      res.setHeader("Cache-Control", "public, max-age=86400");
+      if (filePath.endsWith(".png")) res.setHeader("Content-Type", "image/png");
+      if (filePath.endsWith(".jpg") || filePath.endsWith(".jpeg"))
+        res.setHeader("Content-Type", "image/jpeg");
     },
   })
 );
+app.options("/generated/*", (req, res) => {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Methods", "GET, OPTIONS");
+  res.header("Access-Control-Allow-Headers", "Content-Type, Range");
+  res.sendStatus(204);
+});
 
-/* === 🧹 自動清理舊圖片 === */
+/* === 🧹 自動清理舊圖片（每3小時）=== */
 setInterval(() => {
-  const folderPath = path.join(process.cwd(), "generated");
-  const THREE_HOURS = 3 * 60 * 60 * 1000;
-  if (!fs.existsSync(folderPath)) return;
+  const folder = path.join(process.cwd(), "generated");
+  if (!fs.existsSync(folder)) return;
   const now = Date.now();
-  for (const file of fs.readdirSync(folderPath)) {
-    try {
-      const filePath = path.join(folderPath, file);
-      const stats = fs.statSync(filePath);
-      if (now - stats.mtimeMs > THREE_HOURS) {
-        fs.unlinkSync(filePath);
-        console.log(`🧹 刪除舊檔案 ${file}`);
-      }
-    } catch {}
-  }
+  const limit = 3 * 60 * 60 * 1000;
+  fs.readdirSync(folder).forEach((file) => {
+    const filePath = path.join(folder, file);
+    const stats = fs.statSync(filePath);
+    if (now - stats.mtimeMs > limit) {
+      fs.unlinkSync(filePath);
+      console.log(`🧹 已刪除舊檔案：${file}`);
+    }
+  });
 }, 3 * 60 * 60 * 1000);
 
 /* === 🚀 啟動伺服器 === */
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
-  console.log(`🚀 Inspiro AI Server running on port ${PORT}`);
-  console.log("🌍 狀態檢查：AI 模型 =", MODEL);
+  console.log(`🚀 Inspiro AI Server 正在執行於 port ${PORT}`);
+  console.log("🌍 模型：", MODEL);
 });
 
 /* === 💤 防止 Railway 自動休眠 === */
 setInterval(async () => {
   try {
     await fetch("https://inspiro-ai-server-production.up.railway.app/");
-    console.log("💤 Inspiro AI still alive at", new Date().toLocaleTimeString());
+    console.log("💤 Inspiro AI still alive", new Date().toLocaleTimeString());
   } catch {
     console.warn("⚠️ Railway ping 失敗");
   }
