@@ -170,19 +170,21 @@ async function generateWithHF(prompt, options = {}) {
   return Buffer.from(await resp.arrayBuffer());
 }
 
-/* === 🎨 智慧圖片生成 API === */
+/* === 🎨 智慧圖片生成（含防呆與 fallback）=== */
 app.post("/api/image-smart", async (req, res) => {
   const { message } = req.body || {};
   try {
     console.log("🎨 使用者請求圖片：", message);
+
     const analysis = await fetch(`${req.protocol}://${req.get("host")}/api/analyze`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message }),
     }).then((r) => r.json());
 
-    if (analysis.type !== "image")
-      return res.status(400).json({ error: "不是圖片請求" });
+    if (analysis.type !== "image") {
+      return res.status(400).json({ error: "這不是圖片生成請求。" });
+    }
 
     const prompt = `
 ${message}, luxury black-gold aesthetic, glowing light,
@@ -190,20 +192,56 @@ ${message}, luxury black-gold aesthetic, glowing light,
 `;
 
     const buffer = await generateWithHF(prompt);
+
+    // 🧰 防呆 1：圖片太小或錯誤
+    if (!buffer || buffer.length < 10000) {
+      console.warn("⚠️ Hugging Face 回傳空圖，使用 fallback 圖。");
+      const placeholder = fs.readFileSync(path.join(process.cwd(), "fallback.png"));
+      const { downloadUrl } = saveImageReturnUrl(placeholder, req);
+      return res.json({
+        ok: false,
+        fallback: true,
+        imageBase64: `data:image/png;base64,${placeholder.toString("base64")}`,
+        imageUrl: downloadUrl,
+        usedPrompt: prompt,
+        message: "⚠️ 原圖生成失敗，顯示預設圖片。",
+      });
+    }
+
+    // 🧰 防呆 2：非 PNG 轉換提示
+    const signature = buffer.toString("base64", 0, 20);
+    if (!signature.startsWith("iVBOR")) {
+      console.warn("⚠️ 回傳格式非 PNG，強制標示為 PNG。");
+    }
+
     const { downloadUrl } = saveImageReturnUrl(buffer, req);
     res.json({
       ok: true,
       usedPrompt: prompt,
+      fallback: false,
       imageBase64: `data:image/png;base64,${buffer.toString("base64")}`,
       imageUrl: downloadUrl,
     });
   } catch (err) {
     console.error("💥 /api/image-smart 錯誤：", err);
-    res.status(500).json({ error: "⚠️ Inspiro AI 無法生成圖片。" });
+
+    try {
+      const placeholder = fs.readFileSync(path.join(process.cwd(), "fallback.png"));
+      const { downloadUrl } = saveImageReturnUrl(placeholder, req);
+      res.json({
+        ok: false,
+        fallback: true,
+        imageBase64: `data:image/png;base64,${placeholder.toString("base64")}`,
+        imageUrl: downloadUrl,
+        message: "⚠️ Inspiro AI 無法生成圖片，已使用預設圖。",
+      });
+    } catch {
+      res.status(500).json({ error: "⚠️ 圖片生成與備援失敗。" });
+    }
   }
 });
 
-/* === 📁 靜態檔案（強化版）=== */
+/* === 📁 靜態檔案（CORS 強化）=== */
 app.use(
   "/generated",
   express.static("generated", {
