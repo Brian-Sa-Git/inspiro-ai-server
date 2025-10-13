@@ -1,12 +1,14 @@
 {
   "name": "inspiro-ai-server",
-  "version": "1.0.0",
-  "description": "Inspiro AI Server — 優雅的靈感創作後端伺服器",
+  "version": "1.0.2",
+  "description": "💎 Inspiro AI Server — 優雅靈感創作後端，支援文字、圖片生成與記憶系統。",
   "type": "module",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js",
-    "dev": "nodemon server.js"
+    "dev": "nodemon server.js",
+    "start": "npm install --omit=dev && node server.js",
+    "start:prod": "node server.js",
+    "build": "echo '🚀 Inspiro AI build complete.'"
   },
   "dependencies": {
     "express": "^4.19.2",
@@ -18,7 +20,6 @@
     "passport-facebook": "^3.0.0",
     "memorystore": "^1.6.7",
     "node-fetch": "^3.3.2",
-    "fs": "0.0.1-security",
     "path": "^0.12.7"
   },
   "engines": {
@@ -30,8 +31,11 @@
     "express",
     "gemini",
     "huggingface",
-    "image-generation"
+    "image-generation",
+    "creative-assistant",
+    "inspiration",
+    "gpt-ultra"
   ],
-  "author": "Inspiro AI Team",
+  "author": "Inspiro AI Studio",
   "license": "MIT"
 }
