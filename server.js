@@ -1,4 +1,4 @@
-/* === 💎 Inspiro AI · GPT Ultra (穩定版) === */
+/* === 💎 Inspiro AI · GPT Ultra (穩定安全版) === */
 import express from "express";
 import cors from "cors";
 import bodyParser from "body-parser";
@@ -10,8 +10,18 @@ import path from "path";
 
 /* === ⚙️ 建立伺服器 === */
 const app = express();
-app.use(cors());
-app.use(bodyParser.json({ limit: "50mb" }));
+
+/* === 🌍 CORS 設定：只允許你的網站 === */
+app.use(cors({
+  origin: [
+    "https://amphibian-hyperboloid-z7dj.squarespace.com", // 你的測試網址
+    "https://www.inspiroai.com" // 將來正式網域
+  ],
+  credentials: true
+}));
+
+/* === 📦 Body Parser：限制 10MB，防止惡意請求 === */
+app.use(bodyParser.json({ limit: "10mb" }));
 
 /* === 🧠 Session 記憶（6 小時）=== */
 const MemoryStore = memorystore(session);
@@ -129,6 +139,9 @@ app.post("/api/generate", async (req, res) => {
     const { message, imageOptions } = req.body || {};
     if (!message?.trim()) return res.status(400).json({ reply: "⚠️ 請輸入內容。" });
 
+    // 🪄 除錯：印出使用者訊息
+    console.log("🗣️ User message:", message);
+
     if (!req.session.history) req.session.history = [];
     const history = req.session.history.slice(-6).map((x) => `${x.role}: ${x.text}`).join("\n");
 
@@ -153,15 +166,7 @@ app.post("/api/generate", async (req, res) => {
         }
       );
 
-      let dataPrompt;
-      try {
-        dataPrompt = await rPrompt.json();
-      } catch {
-        const raw = await rPrompt.text();
-        console.warn("⚠️ 無法解析 Gemini 回傳：", raw.slice(0, 100));
-        throw new Error("AI 回傳格式錯誤。");
-      }
-
+      const dataPrompt = await rPrompt.json().catch(() => ({}));
       const englishPrompt =
         dataPrompt?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || message;
       const finalPrompt = `${englishPrompt}, luxury black-gold aesthetic, cinematic glow, ultra-detailed, 4K render`;
@@ -171,7 +176,6 @@ app.post("/api/generate", async (req, res) => {
         buffer = await drawWithHF(finalPrompt, imageOptions);
       } catch (err) {
         console.error("🎨 Hugging Face 錯誤：", err);
-        // fallback 圖片
         const fallback = fs.readFileSync(path.join(process.cwd(), "fallback.png"));
         const fallbackUrl = saveImage(fallback, req);
         return res.json({
@@ -224,15 +228,7 @@ ${webNotes ? `\n${webNotes}` : ""}
       }
     );
 
-    let d;
-    try {
-      d = await r.json();
-    } catch {
-      const raw = await r.text();
-      console.warn("⚠️ Gemini 回傳非 JSON：", raw.slice(0, 100));
-      return res.json({ mode: "error", reply: "⚠️ Inspiro AI 回覆格式錯誤。" });
-    }
-
+    const d = await r.json().catch(() => ({}));
     const reply =
       d?.candidates?.[0]?.content?.parts?.map((p) => p.text).join("\n").trim() ||
       "🤖 Inspiro AI 暫時沒有回覆內容。";
