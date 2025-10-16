@@ -1,5 +1,5 @@
-/* === 💎 Inspiro AI · GPT Ultra v4.0 (Stability 主力版) ===
-   功能：主力 Stability AI、備援 Fal.ai、自動重試、延遲載入
+/* === 💎 Inspiro AI · GPT Ultra Plus v4.0 (Stability 主力版) ===
+   功能：主力 Stability AI、備援 Fal.ai、自動重試、Squarespace 會員同步
    作者：Inspiro AI Studio（2025）
 =========================================================== */
 
@@ -126,25 +126,17 @@ app.post("/api/generate", async (req, res) => {
     const used = req.session.usage?.imageCount || 0;
     if (used >= LIMIT[plan]) return res.json({ ok: false, reply: "今日已達上限" });
 
-    const isImage = /(畫|插畫|圖片|海報|design|illustration)/i.test(message);
-    if (!isImage) return res.json({ ok: true, reply: "✨ Inspiro AI 已啟動（僅限圖片生成模式）" });
-
     let buffer = null;
     let engine = null;
 
-    // 主力 Stability
     try {
       buffer = await drawWithStability(message);
       engine = "Stability AI";
     } catch (e) {
       console.warn("⚠️ Stability 失敗，切換 Fal.ai");
       await delay(1000);
-      try {
-        buffer = await drawWithFal(message);
-        engine = "Fal.ai";
-      } catch (e2) {
-        throw new Error("Stability & Fal.ai 皆失敗");
-      }
+      buffer = await drawWithFal(message);
+      engine = "Fal.ai";
     }
 
     req.session.usage = { imageCount: used + 1 };
