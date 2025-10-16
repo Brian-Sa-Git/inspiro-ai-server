@@ -1,15 +1,17 @@
 {
   "name": "inspiro-ai-server",
-  "version": "1.1.2",
-  "description": "💎 Inspiro AI Server — 優雅靈感創作後端，支援文字生成、圖片生成與記憶系統。",
+  "version": "3.5.0",
+  "description": "💎 Inspiro AI Server — 優雅靈感創作後端，整合 Stability、Fal、Hugging Face、Gemini，支援會員同步與每日次數限制。",
   "type": "module",
   "main": "server.js",
 
   "scripts": {
     "dev": "nodemon server.js",
-    "build": "npm ci --omit=dev && echo '🚀 Inspiro AI build complete and ready for deployment.'",
     "start": "node server.js",
-    "start:prod": "node server.js"
+    "start:prod": "node server.js",
+    "build": "npm ci --omit=dev && echo '🚀 Inspiro AI 已準備完成部署。'",
+    "health": "curl -s https://YOUR_RAILWAY_URL/health || echo '⚠️ Health check failed'",
+    "prepare": "npm prune --omit=dev"
   },
 
   "dependencies": {
@@ -18,11 +20,7 @@
     "body-parser": "^1.20.2",
     "express-session": "^1.17.3",
     "memorystore": "^1.6.7",
-    "node-fetch": "^3.3.2",
-    "passport": "^0.7.0",
-    "passport-google-oauth20": "^2.0.0",
-    "passport-facebook": "^3.0.0",
-    "path": "^0.12.7"
+    "node-fetch": "^3.3.2"
   },
 
   "devDependencies": {
@@ -30,7 +28,7 @@
   },
 
   "engines": {
-    "node": ">=18.0.0"
+    "node": "18.x"
   },
 
   "keywords": [
@@ -38,23 +36,17 @@
     "ai",
     "express",
     "gemini",
+    "stability",
+    "fal",
     "huggingface",
-    "image-generation",
     "creative-assistant",
+    "luxury-ai",
     "inspiration",
     "gpt-ultra",
-    "memory-system",
-    "railway",
-    "docker",
-    "node-server"
+    "railway"
   ],
 
   "author": "Inspiro AI Studio",
   "license": "MIT",
-
-  "homepage": "https://inspiro.ai",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/inspiro-ai/server.git"
-  }
+  "homepage": "https://www.inspiroai.com"
 }
