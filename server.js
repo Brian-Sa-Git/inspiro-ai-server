@@ -13,6 +13,7 @@ import memorystore from "memorystore";
 import fetch from "node-fetch";
 import fs from "fs";
 import path from "path";
+import { FormData } from "node-fetch"; // ✅ 使用 Node 內建 FormData
 
 /* === 🏗️ 初始化 === */
 const app = express();
@@ -21,7 +22,7 @@ const MemoryStore = memorystore(session);
 app.use(cors({
   origin: [
     "https://amphibian-hyperboloid-z7dj.squarespace.com",
-    "https://www.inspiroai.com"
+    "https://www.inspiroai.com",
   ],
   credentials: true,
 }));
@@ -62,7 +63,7 @@ const saveImage = (buf, req) => {
   return `${req.protocol}://${req.get("host")}/generated/${name}`;
 };
 
-/* === 🎨 Stability AI 圖像生成 === */
+/* === 🎨 Stability AI 圖像生成（修正版）=== */
 async function drawWithStability(prompt) {
   const form = new FormData();
   form.append("prompt", `${prompt}, luxury black-gold aesthetic, cinematic lighting, ultra detail, 4K render`);
@@ -75,7 +76,7 @@ async function drawWithStability(prompt) {
     method: "POST",
     headers: {
       Authorization: `Bearer ${STABILITY_API_KEY}`,
-      Accept: "application/json"
+      Accept: "application/json", // ✅ 加上這個 header
     },
     body: form,
   });
@@ -150,7 +151,7 @@ app.post("/api/generate", async (req, res) => {
     const plan = req.session.userPlan;
     const used = req.session.usage?.imageCount || 0;
 
-    // 分流判斷
+    // 圖像模式判斷
     if (isImageRequest(message)) {
       if (used >= LIMIT[plan]) return res.json({ ok: false, reply: "⚠️ 今日已達上限。" });
 
