@@ -1,6 +1,7 @@
-/* === 💎 Inspiro AI · GPT Ultra Plus v3.8 ===
+/* === 💎 Inspiro AI · GPT Ultra Plus v3.9 ===
    整合 Stability + Fal + Hugging Face + Gemini
    功能：Squarespace 會員同步、每日次數限制、自動備援接力、錯誤修復與日誌偵錯
+   作者：Inspiro AI Studio（2025）
 ================================================ */
 
 import express from "express";
@@ -11,12 +12,12 @@ import memorystore from "memorystore";
 import fetch from "node-fetch";
 import fs from "fs";
 import path from "path";
+import FormData from "form-data"; // ✅ 修正 Deprecation 問題，使用穩定版 multipart 支援
 
+/* === 🏗️ App 初始化 === */
 const app = express();
 const DEBUG = true;
-function log(step, msg) {
-  if (DEBUG) console.log(`🪶 [${step}]`, msg);
-}
+const log = (step, msg) => { if (DEBUG) console.log(`🪶 [${step}]`, msg); };
 
 /* === 🌍 CORS 設定 === */
 app.use(cors({
@@ -81,49 +82,50 @@ async function chatWithHF(prompt) {
       messages: [{ role: "user", content: prompt }],
     }),
   });
-  const data = await r.json();
+  const data = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(`HF Chat 錯誤: ${r.status}`);
   return data?.choices?.[0]?.message?.content || "⚠️ 無回覆內容。";
 }
 
-/* === 🎨 Stability AI（新版 JSON 模式，不使用 form-data） === */
+/* === 🎨 Stability AI（multipart 正式版） === */
 async function drawWithStability(prompt) {
   if (!STABILITY_API_KEY) throw new Error("STABILITY_API_KEY 未設定");
 
+  const formData = new FormData();
+  formData.append("prompt", `${prompt}, luxury black-gold aesthetic, cinematic glow, ultra-detailed, 4K render`);
+  formData.append("output_format", "png");
+  formData.append("width", "768");
+  formData.append("height", "768");
+  formData.append("cfg_scale", "7");
+  formData.append("samples", "1");
+
   const res = await fetch("https://api.stability.ai/v2beta/stable-image/generate/core", {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${STABILITY_API_KEY}`,
-      "Content-Type": "application/json",
-      Accept: "application/json",
-    },
-    body: JSON.stringify({
-      prompt: `${prompt}, luxury black-gold aesthetic, cinematic glow, ultra-detailed, 4K render`,
-      width: 768,
-      height: 768,
-      output_format: "png",
-      cfg_scale: 7,
-      samples: 1,
-    }),
+    headers: { Authorization: `Bearer ${STABILITY_API_KEY}` },
+    body: formData,
   });
 
-  const txt = await res.text();
-  if (!res.ok) throw new Error(`Stability 錯誤 (${res.status}): ${txt.slice(0, 120)}`);
-  const data = JSON.parse(txt);
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Stability 錯誤 (${res.status}): ${err.slice(0, 120)}`);
+  }
+
+  const data = await res.json();
   const base64 = data?.artifacts?.[0]?.base64;
   if (!base64) throw new Error("Stability AI 無返回圖像");
-  log("Stability 成功", base64.slice(0, 40));
+  log("✅ Stability 成功生成", base64.slice(0, 50));
   return Buffer.from(base64, "base64");
 }
 
-/* === 🎨 Fal.ai 備援 === */
+/* === 🎨 Fal.ai 備援（修正版 endpoint） === */
 async function drawWithFAL(prompt) {
   if (!FAL_TOKEN) throw new Error("FAL_TOKEN 未設定");
-  const res = await fetch("https://fal.run/fal-ai/flux-pro/context", {
+
+  const res = await fetch("https://fal.run/fal-ai/flux-pro", {
     method: "POST",
     headers: { Authorization: `Key ${FAL_TOKEN}`, "Content-Type": "application/json" },
     body: JSON.stringify({
-      prompt: `${prompt}, luxury black-gold cinematic style, soft lighting, detailed render`,
+      prompt: `${prompt}, luxury black-gold cinematic style, soft lighting, detailed 4K render`,
       num_inference_steps: 25,
       guidance_scale: 7,
     }),
@@ -131,22 +133,29 @@ async function drawWithFAL(prompt) {
 
   const data = await res.json().catch(() => ({}));
   const imgUrl = data?.images?.[0]?.url;
-  if (!imgUrl) throw new Error("Fal.ai 無返回圖片");
-  log("Fal.ai 成功 URL", imgUrl);
+  if (!imgUrl) throw new Error("Fal.ai 無返回圖片 URL");
+  log("✅ Fal.ai 成功 URL", imgUrl);
 
   const imgRes = await fetch(imgUrl);
   return Buffer.from(await imgRes.arrayBuffer());
 }
 
-/* === 🎨 Hugging Face（最終備援） === */
+/* === 🎨 Hugging Face（最終備援・直接回傳影像） === */
 async function drawWithHF(prompt) {
   if (!HF_TOKEN) throw new Error("HF_TOKEN 未設定");
+
   const res = await fetch("https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-dev", {
     method: "POST",
-    headers: { Authorization: `Bearer ${HF_TOKEN}`, "Content-Type": "application/json" },
+    headers: {
+      Authorization: `Bearer ${HF_TOKEN}`,
+      "Content-Type": "application/json",
+      Accept: "image/png",
+    },
     body: JSON.stringify({ inputs: prompt }),
   });
+
   if (!res.ok) throw new Error(`HF 圖像錯誤: ${await res.text()}`);
+  log("✅ Hugging Face 成功生成影像");
   return Buffer.from(await res.arrayBuffer());
 }
 
@@ -167,12 +176,12 @@ app.get("/api/userinfo", (req, res) => {
   const used = req.session.usage?.imageCount || 0;
   const limit = DAILY_LIMITS[plan];
   const label = plan === "gold" ? "👑 黃金鑽石會員"
-               : plan === "silver" ? "💠 銀鑽石會員"
-               : "💎 免費會員";
+    : plan === "silver" ? "💠 銀鑽石會員"
+    : "💎 免費會員";
   res.json({ plan, used, limit, label });
 });
 
-/* === 🎨 /api/generate 主核心（智慧接力版） === */
+/* === 🎨 /api/generate 主核心（智慧接力備援版） === */
 app.post("/api/generate", async (req, res) => {
   try {
     const { message, mode } = req.body || {};
@@ -188,14 +197,13 @@ app.post("/api/generate", async (req, res) => {
     const limit = DAILY_LIMITS[plan];
     const used = req.session.usage.imageCount;
 
-    // 判斷是否為圖片生成
     const isImage = /(畫|生成|圖片|插畫|海報|illustration|design|image)/i.test(message);
     if (isImage || mode === "image") {
       if (used >= limit)
         return res.json({ ok: false, mode: "limit", reply: `⚠️ 今日已達上限（${used}/${limit}）請升級方案或明日再試。` });
       req.session.usage.imageCount++;
 
-      // 🧠 Gemini 英文化提示
+      // Gemini 英文化提示
       const gRes = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
         {
@@ -206,6 +214,7 @@ app.post("/api/generate", async (req, res) => {
           }),
         }
       );
+
       const gData = await gRes.json().catch(() => ({}));
       const englishPrompt = gData?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || message;
       const finalPrompt = `${englishPrompt}, elegant 4K render, golden accents, cinematic lighting`;
@@ -213,7 +222,6 @@ app.post("/api/generate", async (req, res) => {
       let buffer = null;
       let engineUsed = null;
 
-      // 1️⃣ Stability AI
       try {
         buffer = await drawWithStability(finalPrompt);
         engineUsed = "Stability AI";
@@ -221,7 +229,6 @@ app.post("/api/generate", async (req, res) => {
         console.warn("⚠️ Stability 失敗 → Fal 備援", err1.message);
       }
 
-      // 2️⃣ Fal.ai 備援
       if (!buffer) {
         try {
           buffer = await drawWithFAL(finalPrompt);
@@ -231,7 +238,6 @@ app.post("/api/generate", async (req, res) => {
         }
       }
 
-      // 3️⃣ Hugging Face 最終備援
       if (!buffer) {
         try {
           buffer = await drawWithHF(finalPrompt);
@@ -288,4 +294,4 @@ app.get("/health", (_req, res) => {
 
 /* === 🚀 啟動伺服器 === */
 const PORT = process.env.PORT || 8080;
-app.listen(PORT, () => console.log(`🚀 Inspiro AI · GPT Ultra Plus v3.8 正在執行於 port ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 Inspiro AI · GPT Ultra Plus v3.9 正在執行於 port ${PORT}`));
