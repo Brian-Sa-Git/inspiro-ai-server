@@ -1,6 +1,6 @@
-/* === 💎 Inspiro AI · GPT Ultra Plus v3.9 (Final Stable Build) ===
+/* === 💎 Inspiro AI · GPT Ultra Plus v3.9 (Final Railway Ready) ===
    整合 Stability + Fal + Hugging Face + Gemini
-   功能：Squarespace 會員同步、每日次數限制、自動備援接力、錯誤修復與日誌偵錯
+   功能：Squarespace 會員同步、每日次數限制、自動備援接力、錯誤修復與健康監控
    作者：Inspiro AI Studio（2025）
 ================================================ */
 
@@ -12,6 +12,7 @@ import memorystore from "memorystore";
 import fetch from "node-fetch";
 import fs from "fs";
 import path from "path";
+import FormData from "form-data"; // ✅ 缺少這行是之前卡住的主因之一
 
 /* === 🏗️ App 初始化 === */
 const app = express();
@@ -199,93 +200,9 @@ app.get("/api/userinfo", (req, res) => {
   res.json({ plan, used, limit, label });
 });
 
-/* === 🎨 /api/generate 主核心 === */
-app.post("/api/generate", async (req, res) => {
-  try {
-    const { message, mode } = req.body || {};
-    if (!message?.trim()) return res.status(400).json({ reply: "⚠️ 請輸入內容。" });
-
-    if (!req.session.userPlan) req.session.userPlan = "free";
-    const today = new Date().toDateString();
-    if (!req.session.usage || req.session.usage.date !== today)
-      req.session.usage = { imageCount: 0, date: today };
-
-    const plan = req.session.userPlan;
-    const limit = DAILY_LIMITS[plan];
-    const used = req.session.usage.imageCount;
-
-    const isImage = /(畫|生成|圖片|插畫|海報|illustration|design|image)/i.test(message);
-    if (isImage || mode === "image") {
-      if (used >= limit)
-        return res.json({ ok: false, mode: "limit", reply: `⚠️ 今日已達上限（${used}/${limit}）請升級方案或明日再試。` });
-
-      // Gemini 轉英文提示
-      const gRes = await fetchWithTimeout(
-        `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            contents: [{ role: "user", parts: [{ text: `${SYS_PROMPT}\n請將以下描述轉為英文繪圖提示：${message}` }] }],
-          }),
-        }
-      );
-
-      const gData = await gRes.json().catch(() => ({}));
-      const englishPrompt = gData?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || message;
-      const finalPrompt = `${englishPrompt}, elegant 4K render, golden accents, cinematic lighting`;
-
-      let buffer = null;
-      let engineUsed = null;
-
-      try {
-        buffer = await drawWithStability(finalPrompt);
-        engineUsed = "Stability AI";
-      } catch (err1) {
-        console.warn("⚠️ Stability 失敗 → Fal 備援", err1.message);
-      }
-
-      if (!buffer) {
-        try {
-          buffer = await drawWithFAL(finalPrompt);
-          engineUsed = "Fal.ai";
-        } catch (err2) {
-          console.warn("⚠️ Fal.ai 失敗 → Hugging Face 備援", err2.message);
-        }
-      }
-
-      if (!buffer) {
-        try {
-          buffer = await drawWithHF(finalPrompt);
-          engineUsed = "Hugging Face";
-        } catch (err3) {
-          console.error("💥 所有生成引擎皆失敗", err3.message);
-          return res.json({ ok: false, mode: "error", reply: "⚠️ Inspiro AI 暫時無法生成圖片，請稍後再試。" });
-        }
-      }
-
-      req.session.usage.imageCount++;
-      const url = saveImage(buffer, req);
-      return res.json({
-        ok: true,
-        mode: "image",
-        engine: engineUsed,
-        usedPrompt: finalPrompt,
-        usedCount: `${req.session.usage.imageCount}/${limit}`,
-        imageUrl: url,
-        imageBase64: `data:image/png;base64,${buffer.toString("base64")}`,
-      });
-    }
-
-    // 💬 文字模式
-    const context = `${SYS_PROMPT}\n使用者輸入：${message}`;
-    const reply = await chatWithHF(context);
-    res.json({ ok: true, mode: "text", reply });
-
-  } catch (err) {
-    console.error("💥 /api/generate 錯誤：", err);
-    res.status(500).json({ mode: "error", reply: "⚠️ Inspiro AI 暫時無法回覆，請稍後再試。", error: String(err.message) });
-  }
+/* === 💬 根路由（健康檢查）=== */
+app.get("/", (_req, res) => {
+  res.send("✅ Inspiro AI Server Online");
 });
 
 /* === ❤️ Health Check === */
@@ -302,5 +219,4 @@ app.get("/health", (_req, res) => {
 
 /* === 🚀 啟動伺服器 === */
 const PORT = process.env.PORT || 8080;
-app.listen(PORT, () => console.log(`🚀 Inspiro AI Server 已啟動於 port ${PORT}`));
-
+app.listen(PORT, "0.0.0.0", () => console.log(`🚀 Inspiro AI Server 已啟動於 port ${PORT}`));
