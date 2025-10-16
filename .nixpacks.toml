@@ -1,8 +1,12 @@
+# === 💎 Inspiro AI · Nixpacks Build Config ===
 [phases.setup]
-nixPkgs = ["nodejs-18_x"]
+nixPkgs = ["nodejs_18", "npm"]
 
 [phases.install]
 cmds = ["npm install"]
 
+[phases.build]
+cmds = ["echo '🚀 Inspiro AI v4.0 build complete.'"]
+
 [start]
-cmd = "npm start"
+cmd = "node server.js"
