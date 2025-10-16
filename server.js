@@ -1,4 +1,4 @@
-/* === 💎 Inspiro AI · GPT Ultra (穩定安全版) === */
+/* === 💎 Inspiro AI · GPT Ultra (整合 Hugging Face Chat + Image) === */
 import express from "express";
 import cors from "cors";
 import bodyParser from "body-parser";
@@ -14,8 +14,8 @@ const app = express();
 /* === 🌍 CORS 設定：只允許你的網站 === */
 app.use(cors({
   origin: [
-    "https://amphibian-hyperboloid-z7dj.squarespace.com", // 你的測試網址
-    "https://www.inspiroai.com" // 將來正式網域
+    "https://amphibian-hyperboloid-z7dj.squarespace.com", // 測試網址
+    "https://www.inspiroai.com" // 正式網域
   ],
   credentials: true
 }));
@@ -25,20 +25,18 @@ app.use(bodyParser.json({ limit: "10mb" }));
 
 /* === 🧠 Session 記憶（6 小時）=== */
 const MemoryStore = memorystore(session);
-app.use(
-  session({
-    cookie: { maxAge: 6 * 60 * 60 * 1000 },
-    store: new MemoryStore({ checkPeriod: 6 * 60 * 60 * 1000 }),
-    secret: process.env.SESSION_SECRET || "inspiro-ultra-secret",
-    resave: false,
-    saveUninitialized: true,
-  })
-);
+app.use(session({
+  cookie: { maxAge: 6 * 60 * 60 * 1000 },
+  store: new MemoryStore({ checkPeriod: 6 * 60 * 60 * 1000 }),
+  secret: process.env.SESSION_SECRET || "inspiro-ultra-secret",
+  resave: false,
+  saveUninitialized: true,
+}));
 
 /* === 🔑 環境變數 === */
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const HF_TOKEN = process.env.HF_TOKEN;
-const MODEL = process.env.GEMINI_MODEL || "gemini-2.0-flash";
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.0-flash";
 const TAVILY_API_KEY = process.env.TAVILY_API_KEY || "";
 
 /* === 🧾 系統提示：精品 AI 風格 === */
@@ -64,32 +62,44 @@ const saveImage = (buf, req) => {
   return `${req.protocol}://${req.get("host")}/generated/${name}`;
 };
 
-/* === 🎨 Hugging Face 圖像生成 === */
+/* === 💬 Hugging Face Chat 模型（Kimi-K2） === */
+async function chatWithHF(prompt) {
+  if (!HF_TOKEN) throw new Error("HF_TOKEN 未設定");
+  const url = "https://router.huggingface.co/v1/chat/completions";
+
+  const r = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${HF_TOKEN}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "moonshotai/Kimi-K2-Instruct-0905",
+      messages: [{ role: "user", content: prompt }],
+    }),
+  });
+
+  const data = await r.json();
+  if (!r.ok) throw new Error(`HF Chat 錯誤 (${r.status}): ${JSON.stringify(data)}`);
+  return data?.choices?.[0]?.message?.content || "⚠️ 無回覆內容。";
+}
+
+/* === 🎨 Hugging Face 圖像生成（FLUX.1-dev / SDXL） === */
 async function drawWithHF(prompt, options = {}) {
   if (!HF_TOKEN) throw new Error("HF_TOKEN 未設定");
-  const model = "stabilityai/stable-diffusion-xl-base-1.0";
-  const body = {
-    inputs: prompt,
-    parameters: {
-      negative_prompt: options.negative_prompt || "",
-      num_inference_steps: options.num_inference_steps || 30,
-      guidance_scale: options.guidance_scale || 7.5,
-      ...(options.seed ? { seed: options.seed } : {}),
-    },
-  };
-
+  const model = options.model || "black-forest-labs/FLUX.1-dev"; // 或改 SDXL
   const r = await fetch(`https://api-inference.huggingface.co/models/${model}`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${HF_TOKEN}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify(body),
+    body: JSON.stringify({ inputs: prompt }),
   });
 
   if (!r.ok) {
     const errText = await r.text();
-    throw new Error(`Hugging Face API 錯誤 (${r.status}): ${errText.slice(0, 100)}`);
+    throw new Error(`Hugging Face 圖像錯誤 (${r.status}): ${errText.slice(0, 200)}`);
   }
 
   return Buffer.from(await r.arrayBuffer());
@@ -109,8 +119,7 @@ async function webSearch(q) {
     });
     const d = await r.json();
     if (!d.results?.length) return "";
-    const bullets = d.results.map((x) => `- ${x.title}: ${x.url}`).join("\n");
-    return `以下是網路上的相關資訊：\n${bullets}`;
+    return d.results.map((x) => `- ${x.title}: ${x.url}`).join("\n");
   } catch {
     return "";
   }
@@ -130,52 +139,46 @@ app.use(
 
 /* === 🌍 狀態測試 === */
 app.get("/", (_req, res) => {
-  res.send(`✅ Inspiro AI · GPT Ultra 正常運行（模型：${MODEL}）`);
+  res.send(`✅ Inspiro AI · GPT Ultra 正常運行（Gemini: ${GEMINI_MODEL}）`);
 });
 
 /* === 🤖 主核心 API：智能生成 === */
 app.post("/api/generate", async (req, res) => {
   try {
-    const { message, imageOptions } = req.body || {};
+    const { message, mode, imageOptions } = req.body || {};
     if (!message?.trim()) return res.status(400).json({ reply: "⚠️ 請輸入內容。" });
 
-    // 🪄 除錯：印出使用者訊息
     console.log("🗣️ User message:", message);
-
     if (!req.session.history) req.session.history = [];
-    const history = req.session.history.slice(-6).map((x) => `${x.role}: ${x.text}`).join("\n");
 
     /* === 🔍 意圖判斷 === */
     const isImage = /(畫|生成|圖片|插畫|海報|illustration|design|image)/i.test(message);
-    const isTranslate = /(翻譯|translate|to english|成英文)/i.test(message);
-    const isSummary = /(摘要|總結|summary)/i.test(message);
-    const isSearch = /(查詢|新聞|最近|最新|who|what|when|搜尋)/i.test(message);
+    const isSearch = /(查詢|搜尋|最新|news|who|when|where)/i.test(message);
+    const isChat = !isImage && !isSearch;
 
-    /* === 🖼️ 圖片生成模式 === */
-    if (isImage) {
-      const promptBuilder = `${SYS_PROMPT}\n請將以下描述轉為簡潔、具體的英文繪圖提示詞（prompt）：\n使用者輸入：${message}`;
+    /* === 🖼️ 圖像生成 === */
+    if (isImage || mode === "image") {
+      // 用 Gemini 幫使用者把中文轉為 prompt
       const rPrompt = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${GEMINI_API_KEY}`,
+        `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            contents: [{ role: "user", parts: [{ text: promptBuilder }] }],
-            generationConfig: { temperature: 0.6, maxOutputTokens: 200 },
+            contents: [{ role: "user", parts: [{ text: `${SYS_PROMPT}\n將以下描述轉為具體英文繪圖提示詞：${message}` }] }],
+            generationConfig: { temperature: 0.6, maxOutputTokens: 150 },
           }),
         }
       );
-
       const dataPrompt = await rPrompt.json().catch(() => ({}));
-      const englishPrompt =
-        dataPrompt?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || message;
-      const finalPrompt = `${englishPrompt}, luxury black-gold aesthetic, cinematic glow, ultra-detailed, 4K render`;
+      const englishPrompt = dataPrompt?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || message;
+      const finalPrompt = `${englishPrompt}, luxury black-gold aesthetic, cinematic glow, detailed 4K`;
 
       let buffer;
       try {
         buffer = await drawWithHF(finalPrompt, imageOptions);
       } catch (err) {
-        console.error("🎨 Hugging Face 錯誤：", err);
+        console.error("🎨 Hugging Face 圖像錯誤：", err.message);
         const fallback = fs.readFileSync(path.join(process.cwd(), "fallback.png"));
         const fallbackUrl = saveImage(fallback, req);
         return res.json({
@@ -188,9 +191,6 @@ app.post("/api/generate", async (req, res) => {
       }
 
       const url = saveImage(buffer, req);
-      req.session.history.push({ role: "user", text: message });
-      req.session.history.push({ role: "ai", text: "[image]" });
-
       return res.json({
         ok: true,
         mode: "image",
@@ -200,48 +200,28 @@ app.post("/api/generate", async (req, res) => {
       });
     }
 
-    /* === 🌐 若為搜尋型問題 === */
-    const webNotes = isSearch ? await webSearch(message) : "";
+    /* === 🌐 搜尋型 === */
+    const searchNotes = isSearch ? await webSearch(message) : "";
 
     /* === 💬 一般文字對話 === */
     const context = `
 ${SYS_PROMPT}
-
-最近對話節錄：
-${history || "(無記錄)"}
-
 使用者輸入：${message}
-${isTranslate ? "請翻譯成英文。" : ""}
-${isSummary ? "請摘要重點並條列呈現。" : ""}
-${webNotes ? `\n${webNotes}` : ""}
+${searchNotes ? `\n相關資料：\n${searchNotes}` : ""}
 `;
 
-    const r = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${GEMINI_API_KEY}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ role: "user", parts: [{ text: context }] }],
-          generationConfig: { temperature: 0.8, maxOutputTokens: 1000 },
-        }),
-      }
-    );
-
-    const d = await r.json().catch(() => ({}));
-    const reply =
-      d?.candidates?.[0]?.content?.parts?.map((p) => p.text).join("\n").trim() ||
-      "🤖 Inspiro AI 暫時沒有回覆內容。";
+    let reply;
+    try {
+      reply = await chatWithHF(context);
+    } catch (err) {
+      console.error("💬 Hugging Face Chat 錯誤：", err.message);
+      reply = "⚠️ Inspiro AI 無法回應，請稍後再試。";
+    }
 
     req.session.history.push({ role: "user", text: message });
     req.session.history.push({ role: "ai", text: reply });
 
-    res.json({
-      ok: true,
-      mode: "text",
-      reply,
-      source: isSearch ? "web+ai" : "chat",
-    });
+    res.json({ ok: true, mode: "text", reply });
   } catch (err) {
     console.error("💥 /api/generate 錯誤：", err);
     res.status(500).json({
