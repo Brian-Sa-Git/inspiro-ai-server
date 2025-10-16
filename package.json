@@ -1,14 +1,13 @@
 {
   "name": "inspiro-ai-server",
-  "version": "3.8.0",
+  "version": "3.9.0",
   "description": "💎 Inspiro AI Server — 整合 Stability + Fal + Hugging Face + Gemini，支援 Squarespace 會員同步與每日限制。",
   "type": "module",
   "main": "server.js",
   "scripts": {
-    "dev": "nodemon server.js",
     "start": "node server.js",
-    "start:prod": "NODE_ENV=production node server.js",
-    "build": "npm ci --omit=dev && echo '🚀 Inspiro AI v3.8 build complete.'"
+    "dev": "nodemon server.js",
+    "build": "npm install && echo '🚀 Inspiro AI v3.9 build complete.'"
   },
   "dependencies": {
     "express": "^4.19.2",
