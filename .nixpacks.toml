@@ -1,12 +1,8 @@
-# === 💎 Inspiro AI · Railway Nixpacks 設定 ===
-# 使用 Node.js 20+ 環境，支援 ESM 與 FormData
-# 自動安裝依賴並啟動伺服器
-
 [phases.setup]
-nixPkgs = ["nodejs_20"]
+nixPkgs = ["nodejs-20_x"]
 
-[phases.install]
+[phases.build]
 cmds = ["npm install"]
 
 [phases.start]
-cmd = "node server.js"
+cmd = "npm start"
