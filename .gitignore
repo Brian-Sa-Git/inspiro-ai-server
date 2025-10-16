@@ -1,38 +1,74 @@
 # === 💎 Inspiro AI · Git Ignore 設定 ===
+# 避免金鑰洩漏、編譯暫存、日誌、生成圖像被上傳
+# 適用於 Railway / Render / Vercel / GitHub
 
-# Node modules
+# === 📦 Node modules 與相依 ===
 node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+package-lock.json
 
-# Environment files
+# === 🔑 環境設定（保護 API 金鑰）===
 .env
 .env.local
 .env.production
 .env.development
 .env.test
+.env.backup
+.env.example.local
 
-# Build outputs
+# === 🏗️ 編譯 / 暫存輸出 ===
 dist/
 build/
 .cache/
 .tmp/
+out/
+coverage/
+*.tsbuildinfo
 
-# Logs
+# === 🧠 Logs 與除錯檔 ===
 *.log
 logs/
 debug.log
+nohup.out
+*.pid
 
-# Generated images
+# === 🖼️ 自動生成檔案 ===
 /generated/
+public/generated/
+uploads/
+tmp_images/
 
-# OS / Editor files
+# === ⚙️ 專案環境檔 ===
+# Railway / Render / Vercel / Docker 等環境專用
+railway.json
+render.yaml
+vercel.json
+Dockerfile
+.dockerignore
+
+# === 💻 作業系統與編輯器檔 ===
 .DS_Store
 Thumbs.db
 .vscode/
 .idea/
 *.swp
+*.swo
+*.bak
+*.tmp
 
-# Railway metadata (if local)
-railway.json
+# === 🧪 測試相關 ===
+jest/
+__tests__/
+__mocks__/
+coverage/
+
+# === 🧰 其他保護（避免誤傳秘密資料）===
+*.key
+*.pem
+*.crt
+*.cert
+secrets/
+keys/
+private/
