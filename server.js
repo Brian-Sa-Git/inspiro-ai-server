@@ -1,4 +1,4 @@
-/* === 💎 Inspiro AI · GPT Ultra Plus v3.5 ===
+/* === 💎 Inspiro AI · GPT Ultra Plus v3.6 ===
    整合 Stability + Fal + Hugging Face + Gemini
    功能：Squarespace 會員同步、每日次數限制、自動備援與 API Key 偵測
 ================================================ */
@@ -10,9 +10,10 @@ import memorystore from "memorystore";
 import fetch from "node-fetch";
 import fs from "fs";
 import path from "path";
+import FormData from "form-data"; // ✅ 新增：multipart/form-data 支援
 
 const app = express();
-const DEBUG = true; // ✅ 可改成 false 關閉除錯日誌
+const DEBUG = true;
 function log(step, msg) {
   if (DEBUG) console.log(`🪶 [${step}]`, msg);
 }
@@ -81,55 +82,55 @@ async function chatWithHF(prompt) {
     }),
   });
   const data = await r.json();
-  log("HF Chat 回傳", data);
   if (!r.ok) throw new Error(`HF Chat 錯誤: ${r.status}`);
   return data?.choices?.[0]?.message?.content || "⚠️ 無回覆內容。";
 }
 
-/* === 🎨 Stability AI（主引擎） === */
+/* === 🎨 Stability AI（主引擎・multipart 修正版） === */
 async function drawWithStability(prompt) {
   if (!STABILITY_API_KEY) throw new Error("STABILITY_API_KEY 未設定");
+
+  const formData = new FormData();
+  formData.append("prompt", `${prompt}, luxury black-gold aesthetic, cinematic lighting, ultra-detailed, 4K render`);
+  formData.append("width", "768");
+  formData.append("height", "768");
+  formData.append("output_format", "png");
+
   const res = await fetch("https://api.stability.ai/v2beta/stable-image/generate/core", {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${STABILITY_API_KEY}`,
-      "Content-Type": "application/json",
-      Accept: "application/json",
-    },
-    body: JSON.stringify({
-      prompt: `${prompt}, luxury black-gold aesthetic, cinematic glow, ultra-detailed, 4K render`,
-      width: 768,
-      height: 768,
-      cfg_scale: 7,
-      steps: 30,
-      samples: 1,
-    }),
+    headers: { Authorization: `Bearer ${STABILITY_API_KEY}`, Accept: "application/json" },
+    body: formData,
   });
+
   const txt = await res.text();
   if (!res.ok) throw new Error(`Stability AI 錯誤 (${res.status}): ${txt.slice(0, 120)}`);
+
   const data = JSON.parse(txt);
-  log("Stability 回傳", data);
   const base64 = data?.artifacts?.[0]?.base64;
   if (!base64) throw new Error("Stability AI 無返回圖像");
+  log("Stability 成功", base64.slice(0, 30));
   return Buffer.from(base64, "base64");
 }
 
-/* === 🎨 Fal.ai 備援 === */
+/* === 🎨 Fal.ai 備援（修正路徑） === */
 async function drawWithFAL(prompt) {
   if (!FAL_TOKEN) throw new Error("FAL_TOKEN 未設定");
-  const res = await fetch("https://fal.run/fal-ai/fal-ai/flux-pro/context", {
+
+  const res = await fetch("https://fal.run/fal-ai/flux-pro/context", { // ✅ 修正：刪掉多餘 fal-ai/
     method: "POST",
     headers: { Authorization: `Key ${FAL_TOKEN}`, "Content-Type": "application/json" },
     body: JSON.stringify({
-      prompt: `${prompt}, luxury black-gold style, cinematic soft light, detailed render`,
+      prompt: `${prompt}, luxury black-gold cinematic style, soft lighting, detailed render`,
       num_inference_steps: 25,
       guidance_scale: 7,
     }),
   });
-  const data = await res.json();
-  log("Fal.ai 回傳", data);
+
+  const data = await res.json().catch(() => ({}));
   const imgUrl = data?.images?.[0]?.url;
   if (!imgUrl) throw new Error("Fal.ai 無返回圖片");
+  log("Fal.ai 成功 URL", imgUrl);
+
   const imgRes = await fetch(imgUrl);
   return Buffer.from(await imgRes.arrayBuffer());
 }
@@ -142,9 +143,7 @@ async function drawWithHF(prompt) {
     body: JSON.stringify({ inputs: prompt }),
   });
   if (!res.ok) throw new Error(`HF 圖像錯誤: ${await res.text()}`);
-  const buf = Buffer.from(await res.arrayBuffer());
-  log("HF 圖像成功", buf.length);
-  return buf;
+  return Buffer.from(await res.arrayBuffer());
 }
 
 /* === 👥 Squarespace 會員同步 === */
@@ -192,14 +191,15 @@ app.post("/api/generate", async (req, res) => {
         return res.json({ ok: false, mode: "limit", reply: `⚠️ 今日已達上限（${used}/${limit}）請升級方案或明日再試。` });
       req.session.usage.imageCount++;
 
-      // 🧠 Gemini 英文化提示
+      // Gemini 英文化提示
       const gRes = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            contents: [{ role: "user", parts: [{ text: `${SYS_PROMPT}\n請將以下描述轉為英文繪圖提示：${message}` }] }], }),
+            contents: [{ role: "user", parts: [{ text: `${SYS_PROMPT}\n請將以下描述轉為英文繪圖提示：${message}` }] }],
+          }),
         }
       );
       const gData = await gRes.json().catch(() => ({}));
@@ -211,7 +211,7 @@ app.post("/api/generate", async (req, res) => {
         buffer = await drawWithStability(finalPrompt);
         console.log("✅ 使用 Stability AI 成功生成");
       } catch (e1) {
-        console.warn("⚠️ Stability AI 失敗 → Fal.ai 備援", e1.message);
+        console.warn("⚠️ Stability 失敗 → Fal 備援", e1.message);
         try {
           buffer = await drawWithFAL(finalPrompt);
           console.log("✅ 使用 Fal.ai 成功生成");
@@ -262,4 +262,4 @@ app.get("/health", (_req, res) => {
 
 /* === 🚀 啟動伺服器 === */
 const PORT = process.env.PORT || 8080;
-app.listen(PORT, () => console.log(`🚀 Inspiro AI · GPT Ultra Plus v3.5 正在執行於 port ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 Inspiro AI · GPT Ultra Plus v3.6 正在執行於 port ${PORT}`));
