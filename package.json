@@ -1,13 +1,13 @@
 {
   "name": "inspiro-ai-server",
-  "version": "4.1.0",
-  "description": "💎 Inspiro AI Server — 主力 Stability + 備援 Fal.ai，支援 Squarespace 會員同步與自動限額管理。",
+  "version": "4.3.0",
+  "description": "💎 Inspiro AI Server — 智慧雙模式：對話 + 圖像生成（主力 Stability，備援 Fal.ai，整合 Hugging Face 對話與 Squarespace 會員同步）。",
   "type": "module",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js",
-    "build": "npm ci --omit=dev && echo '🚀 Inspiro AI v4.1 build complete.'"
+    "build": "npm ci --omit=dev && echo '🚀 Inspiro AI v4.3 build complete.'"
   },
   "dependencies": {
     "express": "^4.19.2",
@@ -15,14 +15,13 @@
     "body-parser": "^1.20.2",
     "express-session": "^1.17.3",
     "memorystore": "^1.6.7",
-    "node-fetch": "^3.3.2",
-    "form-data": "^4.0.0"
+    "node-fetch": "^3.3.2"
   },
   "devDependencies": {
     "nodemon": "^3.1.4"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=18.20.0"
   },
   "author": "Inspiro AI Studio",
   "license": "MIT",
