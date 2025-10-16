@@ -1,6 +1,7 @@
-/* === 💎 Inspiro AI · GPT Ultra Plus v4.2 (Stability 主力 + Fal 備援版) ===
-   功能：主力 Stability AI、備援 Fal.ai、自動重試、Squarespace 會員同步
-   修正：Accept Header 錯誤、FormData 警告、Fal 無圖片 URL 問題
+/* === 💎 Inspiro AI · GPT Ultra Plus v4.3 (智慧雙模式：對話 + 圖像生成) ===
+   功能：自動判斷使用者是要「聊天」或「生成圖片」
+   主力 Stability AI（圖像）+ 備援 Fal.ai
+   對話模式使用 Hugging Face (Kimi-K2)
    作者：Inspiro AI Studio（2025）
 =========================================================== */
 
@@ -24,10 +25,9 @@ app.use(cors({
   ],
   credentials: true,
 }));
-
 app.use(bodyParser.json({ limit: "10mb" }));
 
-/* === 🧠 Session 記憶 === */
+/* === 🧠 Session === */
 app.use(session({
   store: new MemoryStore({ checkPeriod: 6 * 60 * 60 * 1000 }),
   cookie: { maxAge: 6 * 60 * 60 * 1000 },
@@ -40,15 +40,16 @@ app.use(session({
 app.use("/generated", express.static("generated"));
 
 /* === 🔑 環境變數 === */
-const { STABILITY_API_KEY, FAL_TOKEN } = process.env;
+const { STABILITY_API_KEY, FAL_TOKEN, HF_TOKEN } = process.env;
 
 /* === 💎 每日限制 === */
 const LIMIT = { free: 10, silver: 25, gold: 999 };
 
-/* === 🧠 系統提示 === */
+/* === 🧠 系統人格提示 === */
 const SYS_PROMPT = `
-你是「Inspiro AI」，一位優雅且具創意的精品級智能助理。
-請以簡潔、有設計感、有靈感的方式回覆。
+你是「Inspiro AI」，一位優雅、有靈感、具設計感的智能助理。
+請用高質感、溫柔、有靈性的語氣回答。
+避免提到技術、API、模型名稱。
 `;
 
 /* === 🧰 工具 === */
@@ -60,9 +61,8 @@ const saveImage = (buf, req) => {
   fs.writeFileSync(path.join(folder, name), buf);
   return `${req.protocol}://${req.get("host")}/generated/${name}`;
 };
-const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/* === 🎨 Stability AI 主引擎（修正版）=== */
+/* === 🎨 Stability AI 圖像生成 === */
 async function drawWithStability(prompt) {
   const form = new FormData();
   form.append("prompt", `${prompt}, luxury black-gold aesthetic, cinematic lighting, ultra detail, 4K render`);
@@ -92,7 +92,7 @@ async function drawWithStability(prompt) {
   return Buffer.from(base64, "base64");
 }
 
-/* === 🎨 Fal.ai 備援引擎（修正版）=== */
+/* === 🎨 Fal.ai 備援引擎 === */
 async function drawWithFal(prompt) {
   const res = await fetch("https://fal.run/fal-ai/flux-pro", {
     method: "POST",
@@ -113,64 +113,81 @@ async function drawWithFal(prompt) {
   return Buffer.from(await imgRes.arrayBuffer());
 }
 
-/* === 👥 Squarespace 同步 === */
-app.post("/api/setplan", (req, res) => {
-  const { email, plan } = req.body || {};
-  if (!email) return res.status(400).json({ ok: false });
-  const level = /gold/i.test(plan) ? "gold" : /silver/i.test(plan) ? "silver" : "free";
-  req.session.userPlan = level;
-  req.session.userEmail = email;
-  res.json({ ok: true, plan: level });
-});
+/* === 💬 Hugging Face 對話模型 === */
+async function chatWithHF(message) {
+  const res = await fetch("https://router.huggingface.co/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${HF_TOKEN}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "moonshotai/Kimi-K2-Instruct-0905",
+      messages: [
+        { role: "system", content: SYS_PROMPT },
+        { role: "user", content: message },
+      ],
+    }),
+  });
 
-/* === 📊 使用者資訊 === */
-app.get("/api/userinfo", (req, res) => {
-  const plan = req.session.userPlan || "free";
-  const used = req.session.usage?.imageCount || 0;
-  res.json({ plan, used, limit: LIMIT[plan] });
-});
+  const data = await res.json();
+  return data?.choices?.[0]?.message?.content || "⚠️ Inspiro AI 暫時無法回覆。";
+}
+
+/* === 🎯 智慧模式判斷 === */
+function isImageRequest(text) {
+  return /(畫|圖|image|插畫|設計|生成|photo|picture|art|illustration)/i.test(text);
+}
 
 /* === 🎨 主生成 API === */
 app.post("/api/generate", async (req, res) => {
   try {
     const { message } = req.body || {};
-    if (!message) return res.status(400).json({ ok: false, reply: "⚠️ 請輸入內容" });
+    if (!message?.trim()) return res.status(400).json({ ok: false, reply: "⚠️ 請輸入內容。" });
 
+    // 初始化 session
     if (!req.session.userPlan) req.session.userPlan = "free";
     const plan = req.session.userPlan;
     const used = req.session.usage?.imageCount || 0;
-    if (used >= LIMIT[plan]) return res.json({ ok: false, reply: "今日已達上限" });
 
-    let buffer = null;
-    let engine = null;
+    // 分流判斷
+    if (isImageRequest(message)) {
+      if (used >= LIMIT[plan]) return res.json({ ok: false, reply: "⚠️ 今日已達上限。" });
 
-    try {
-      buffer = await drawWithStability(message);
-      engine = "Stability AI";
-    } catch (e) {
-      console.warn("⚠️ Stability 失敗，切換 Fal.ai 備援...");
-      await delay(1000);
+      let buffer = null;
+      let engine = null;
       try {
-        buffer = await drawWithFal(message);
-        engine = "Fal.ai";
-      } catch (err2) {
-        console.error("💥 Fal.ai 也失敗：", err2.message);
-        return res.json({ ok: false, reply: "⚠️ Inspiro AI 暫時無法生成圖片，請稍後再試。" });
+        buffer = await drawWithStability(message);
+        engine = "Stability AI";
+      } catch (e) {
+        console.warn("⚠️ Stability 失敗，切換 Fal.ai...");
+        try {
+          buffer = await drawWithFal(message);
+          engine = "Fal.ai";
+        } catch (err2) {
+          console.error("💥 Fal.ai 也失敗：", err2.message);
+          return res.json({ ok: false, reply: "⚠️ Inspiro AI 暫時無法生成圖片，請稍後再試。" });
+        }
       }
+
+      req.session.usage = { imageCount: used + 1 };
+      const url = saveImage(buffer, req);
+      return res.json({
+        ok: true,
+        mode: "image",
+        engine,
+        usedCount: `${used + 1}/${LIMIT[plan]}`,
+        imageUrl: url,
+      });
     }
 
-    req.session.usage = { imageCount: used + 1 };
-    const url = saveImage(buffer, req);
+    // 💬 對話模式
+    const reply = await chatWithHF(message);
+    res.json({ ok: true, mode: "text", reply });
 
-    res.json({
-      ok: true,
-      mode: "image",
-      engine,
-      usedCount: `${used + 1}/${LIMIT[plan]}`,
-      imageUrl: url,
-    });
   } catch (err) {
-    res.status(500).json({ ok: false, reply: `⚠️ Inspiro AI 錯誤：${err.message}` });
+    console.error("💥 /api/generate 錯誤：", err);
+    res.status(500).json({ ok: false, reply: "⚠️ Inspiro AI 暫時無法回覆，請稍後再試。" });
   }
 });
 
@@ -180,6 +197,7 @@ app.get("/health", (_req, res) => {
     status: "✅ Running",
     stability: !!STABILITY_API_KEY,
     fal: !!FAL_TOKEN,
+    hf: !!HF_TOKEN,
     time: new Date().toLocaleString(),
   });
 });
@@ -187,5 +205,5 @@ app.get("/health", (_req, res) => {
 /* === 🚀 啟動 === */
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`🚀 Inspiro AI v4.2 · Stability + Fal 運行中於 port ${PORT}`);
+  console.log(`🚀 Inspiro AI v4.3 · 對話 + 圖像模式 運行中於 port ${PORT}`);
 });
