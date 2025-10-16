@@ -1,4 +1,4 @@
-/* === 💎 Inspiro AI · GPT Ultra Plus v3.9 ===
+/* === 💎 Inspiro AI · GPT Ultra Plus v3.9 (Final Stable Build) ===
    整合 Stability + Fal + Hugging Face + Gemini
    功能：Squarespace 會員同步、每日次數限制、自動備援接力、錯誤修復與日誌偵錯
    作者：Inspiro AI Studio（2025）
@@ -12,7 +12,6 @@ import memorystore from "memorystore";
 import fetch from "node-fetch";
 import fs from "fs";
 import path from "path";
-import FormData from "form-data"; // ✅ 修正 Deprecation 問題，使用穩定版 multipart 支援
 
 /* === 🏗️ App 初始化 === */
 const app = express();
@@ -39,6 +38,18 @@ app.use(session({
   saveUninitialized: true,
 }));
 
+/* === 📁 靜態圖片資料夾 === */
+app.use(
+  "/generated",
+  express.static("generated", {
+    setHeaders: (res) => {
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      res.setHeader("Content-Type", "image/png");
+      res.setHeader("Cache-Control", "public, max-age=86400");
+    },
+  })
+);
+
 /* === 🔑 環境變數 === */
 const {
   GEMINI_API_KEY,
@@ -61,7 +72,7 @@ const SYS_PROMPT = `
 4️⃣ 所有回覆須自然流暢、有設計感與情感溫度。
 `;
 
-/* === 🧰 基礎函式 === */
+/* === 🧰 共用工具 === */
 const ensureDir = (dir) => { if (!fs.existsSync(dir)) fs.mkdirSync(dir); };
 const saveImage = (buf, req) => {
   const folder = path.join(process.cwd(), "generated");
@@ -71,10 +82,17 @@ const saveImage = (buf, req) => {
   return `${req.protocol}://${req.get("host")}/generated/${name}`;
 };
 
+const fetchWithTimeout = (url, options = {}, ms = 60000) => {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), ms);
+  return fetch(url, { ...options, signal: controller.signal })
+    .finally(() => clearTimeout(id));
+};
+
 /* === 💬 Hugging Face Chat === */
 async function chatWithHF(prompt) {
   if (!HF_TOKEN) throw new Error("HF_TOKEN 未設定");
-  const r = await fetch("https://router.huggingface.co/v1/chat/completions", {
+  const r = await fetchWithTimeout("https://router.huggingface.co/v1/chat/completions", {
     method: "POST",
     headers: { Authorization: `Bearer ${HF_TOKEN}`, "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -87,7 +105,7 @@ async function chatWithHF(prompt) {
   return data?.choices?.[0]?.message?.content || "⚠️ 無回覆內容。";
 }
 
-/* === 🎨 Stability AI（multipart 正式版） === */
+/* === 🎨 Stability AI === */
 async function drawWithStability(prompt) {
   if (!STABILITY_API_KEY) throw new Error("STABILITY_API_KEY 未設定");
 
@@ -99,7 +117,7 @@ async function drawWithStability(prompt) {
   formData.append("cfg_scale", "7");
   formData.append("samples", "1");
 
-  const res = await fetch("https://api.stability.ai/v2beta/stable-image/generate/core", {
+  const res = await fetchWithTimeout("https://api.stability.ai/v2beta/stable-image/generate/core", {
     method: "POST",
     headers: { Authorization: `Bearer ${STABILITY_API_KEY}` },
     body: formData,
@@ -107,7 +125,7 @@ async function drawWithStability(prompt) {
 
   if (!res.ok) {
     const err = await res.text();
-    throw new Error(`Stability 錯誤 (${res.status}): ${err.slice(0, 120)}`);
+    throw new Error(`Stability 錯誤 (${res.status}): ${err.slice(0, 200)}`);
   }
 
   const data = await res.json();
@@ -117,11 +135,11 @@ async function drawWithStability(prompt) {
   return Buffer.from(base64, "base64");
 }
 
-/* === 🎨 Fal.ai 備援（修正版 endpoint） === */
+/* === 🎨 Fal.ai 備援 === */
 async function drawWithFAL(prompt) {
   if (!FAL_TOKEN) throw new Error("FAL_TOKEN 未設定");
 
-  const res = await fetch("https://fal.run/fal-ai/flux-pro", {
+  const res = await fetchWithTimeout("https://fal.run/fal-ai/flux-pro", {
     method: "POST",
     headers: { Authorization: `Key ${FAL_TOKEN}`, "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -136,15 +154,15 @@ async function drawWithFAL(prompt) {
   if (!imgUrl) throw new Error("Fal.ai 無返回圖片 URL");
   log("✅ Fal.ai 成功 URL", imgUrl);
 
-  const imgRes = await fetch(imgUrl);
+  const imgRes = await fetchWithTimeout(imgUrl);
   return Buffer.from(await imgRes.arrayBuffer());
 }
 
-/* === 🎨 Hugging Face（最終備援・直接回傳影像） === */
+/* === 🎨 Hugging Face 備援 === */
 async function drawWithHF(prompt) {
   if (!HF_TOKEN) throw new Error("HF_TOKEN 未設定");
 
-  const res = await fetch("https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-dev", {
+  const res = await fetchWithTimeout("https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-dev", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${HF_TOKEN}`,
@@ -181,13 +199,12 @@ app.get("/api/userinfo", (req, res) => {
   res.json({ plan, used, limit, label });
 });
 
-/* === 🎨 /api/generate 主核心（智慧接力備援版） === */
+/* === 🎨 /api/generate 主核心 === */
 app.post("/api/generate", async (req, res) => {
   try {
     const { message, mode } = req.body || {};
     if (!message?.trim()) return res.status(400).json({ reply: "⚠️ 請輸入內容。" });
 
-    // 初始化 session
     if (!req.session.userPlan) req.session.userPlan = "free";
     const today = new Date().toDateString();
     if (!req.session.usage || req.session.usage.date !== today)
@@ -201,10 +218,9 @@ app.post("/api/generate", async (req, res) => {
     if (isImage || mode === "image") {
       if (used >= limit)
         return res.json({ ok: false, mode: "limit", reply: `⚠️ 今日已達上限（${used}/${limit}）請升級方案或明日再試。` });
-      req.session.usage.imageCount++;
 
-      // Gemini 英文化提示
-      const gRes = await fetch(
+      // Gemini 轉英文提示
+      const gRes = await fetchWithTimeout(
         `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
         {
           method: "POST",
@@ -244,14 +260,11 @@ app.post("/api/generate", async (req, res) => {
           engineUsed = "Hugging Face";
         } catch (err3) {
           console.error("💥 所有生成引擎皆失敗", err3.message);
-          return res.json({
-            ok: false,
-            mode: "error",
-            reply: "⚠️ Inspiro AI 暫時無法生成圖片，請稍後再試。",
-          });
+          return res.json({ ok: false, mode: "error", reply: "⚠️ Inspiro AI 暫時無法生成圖片，請稍後再試。" });
         }
       }
 
+      req.session.usage.imageCount++;
       const url = saveImage(buffer, req);
       return res.json({
         ok: true,
@@ -264,19 +277,14 @@ app.post("/api/generate", async (req, res) => {
       });
     }
 
-    // 💬 一般文字回覆
+    // 💬 文字模式
     const context = `${SYS_PROMPT}\n使用者輸入：${message}`;
     const reply = await chatWithHF(context);
     res.json({ ok: true, mode: "text", reply });
 
   } catch (err) {
     console.error("💥 /api/generate 錯誤：", err);
-    if (req.session?.usage) req.session.usage.imageCount = Math.max(0, req.session.usage.imageCount - 1);
-    res.status(500).json({
-      mode: "error",
-      reply: "⚠️ Inspiro AI 暫時無法回覆，請稍後再試。",
-      error: String(err.message),
-    });
+    res.status(500).json({ mode: "error", reply: "⚠️ Inspiro AI 暫時無法回覆，請稍後再試。", error: String(err.message) });
   }
 });
 
