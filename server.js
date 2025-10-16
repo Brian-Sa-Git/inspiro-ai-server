@@ -1,4 +1,4 @@
-/* === 💎 Inspiro AI · GPT Ultra (整合 Hugging Face Chat + Image) === */
+/* === 💎 Inspiro AI · GPT Ultra (整合 Hugging Face Chat + Image + 會員次數限制) === */
 import express from "express";
 import cors from "cors";
 import bodyParser from "body-parser";
@@ -38,6 +38,13 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const HF_TOKEN = process.env.HF_TOKEN;
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.0-flash";
 const TAVILY_API_KEY = process.env.TAVILY_API_KEY || "";
+
+/* === 💎 Inspiro 會員每日圖片次數限制 === */
+const DAILY_LIMITS = {
+  free: 10,     // 免費會員每日10次
+  silver: 25,   // 銀鑽石會員每日25次
+  gold: 999,    // 黃金會員 (預留)
+};
 
 /* === 🧾 系統提示：精品 AI 風格 === */
 const SYS_PROMPT = `
@@ -87,7 +94,7 @@ async function chatWithHF(prompt) {
 /* === 🎨 Hugging Face 圖像生成（FLUX.1-dev / SDXL） === */
 async function drawWithHF(prompt, options = {}) {
   if (!HF_TOKEN) throw new Error("HF_TOKEN 未設定");
-  const model = options.model || "black-forest-labs/FLUX.1-dev"; // 或改 SDXL
+  const model = options.model || "black-forest-labs/FLUX.1-dev";
   const r = await fetch(`https://api-inference.huggingface.co/models/${model}`, {
     method: "POST",
     headers: {
@@ -151,6 +158,19 @@ app.post("/api/generate", async (req, res) => {
     console.log("🗣️ User message:", message);
     if (!req.session.history) req.session.history = [];
 
+    /* === 🧮 會員生成次數限制 === */
+    if (!req.session.userPlan) req.session.userPlan = "free"; // 預設免費會員
+    if (!req.session.usage) req.session.usage = { imageCount: 0, date: new Date().toDateString() };
+
+    const today = new Date().toDateString();
+    if (req.session.usage.date !== today) {
+      req.session.usage = { imageCount: 0, date: today };
+    }
+
+    const plan = req.session.userPlan;
+    const limit = DAILY_LIMITS[plan] || 10;
+    const used = req.session.usage.imageCount;
+
     /* === 🔍 意圖判斷 === */
     const isImage = /(畫|生成|圖片|插畫|海報|illustration|design|image)/i.test(message);
     const isSearch = /(查詢|搜尋|最新|news|who|when|where)/i.test(message);
@@ -158,7 +178,18 @@ app.post("/api/generate", async (req, res) => {
 
     /* === 🖼️ 圖像生成 === */
     if (isImage || mode === "image") {
-      // 用 Gemini 幫使用者把中文轉為 prompt
+      if (used >= limit) {
+        return res.json({
+          ok: false,
+          mode: "limit",
+          reply: `⚠️ 你的「${plan === "free" ? "免費會員" : plan === "silver" ? "銀鑽石會員" : "黃金會員"}」今日圖片生成次數已用完（${used}/${limit}）。請升級方案或明日再試。`,
+        });
+      }
+
+      // 次數 +1
+      req.session.usage.imageCount++;
+
+      // 用 Gemini 幫使用者把中文轉為英文 prompt
       const rPrompt = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
         {
@@ -195,6 +226,7 @@ app.post("/api/generate", async (req, res) => {
         ok: true,
         mode: "image",
         usedPrompt: finalPrompt,
+        usedCount: `${req.session.usage.imageCount}/${limit}`,
         imageUrl: url,
         imageBase64: `data:image/png;base64,${buffer.toString("base64")}`,
       });
