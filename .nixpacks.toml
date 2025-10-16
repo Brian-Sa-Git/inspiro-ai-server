@@ -1,8 +1,8 @@
-# === Inspiro AI · Railway Nixpacks 設定 ===
+# === 💎 Inspiro AI · Railway Nixpacks 設定 ===
 # 建立 Node 18+ 環境，並自動安裝依賴與啟動伺服器
 
 [phases.setup]
-nixPkgs = ["nodejs-18_x"]
+nixPkgs = ["nodejs-18_x", "npm"]
 
 [phases.install]
 cmds = ["npm install"]
@@ -10,5 +10,5 @@ cmds = ["npm install"]
 [phases.build]
 cmds = ["echo '✅ Inspiro AI build complete'"]
 
-[start]
-cmd = "npm start"
+[phases.start]
+cmds = ["npm start"]
