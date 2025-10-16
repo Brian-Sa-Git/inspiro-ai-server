@@ -302,4 +302,5 @@ app.get("/health", (_req, res) => {
 
 /* === 🚀 啟動伺服器 === */
 const PORT = process.env.PORT || 8080;
-app.listen(PORT, () => console.log(`🚀 Inspiro AI · GPT Ultra Plus v3.9 正在執行於 port ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 Inspiro AI Server 已啟動於 port ${PORT}`));
+
