@@ -1,13 +1,16 @@
-# === 💎 Inspiro AI · Git Ignore 設定 ===
-# 避免金鑰洩漏、編譯暫存、日誌、生成圖像被上傳
-# 適用於 Railway / Render / Vercel / GitHub
+# === 💎 Inspiro AI · Git Ignore（最終優化版）===
+# 適用於：Railway / Render / Vercel / GitHub
+# 功能：防止金鑰洩漏、避免暫存檔上傳、加快部署速度
 
-# === 📦 Node modules 與相依 ===
+# === 📦 Node modules（不要上傳依賴檔）===
 node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-package-lock.json
+
+# 🚀 保留 package-lock.json（確保部署穩定）
+# （以前是被忽略的，現在保留，提升 Railway 相容性）
+# package-lock.json
 
 # === 🔑 環境設定（保護 API 金鑰）===
 .env
@@ -18,7 +21,7 @@ package-lock.json
 .env.backup
 .env.example.local
 
-# === 🏗️ 編譯 / 暫存輸出 ===
+# === 🏗️ 編譯與暫存輸出（非必要上傳）===
 dist/
 build/
 .cache/
@@ -34,21 +37,20 @@ debug.log
 nohup.out
 *.pid
 
-# === 🖼️ 自動生成檔案 ===
+# === 🖼️ 自動生成檔案（避免 Git 體積過大）===
 /generated/
 public/generated/
 uploads/
 tmp_images/
 
-# === ⚙️ 專案環境檔 ===
-# Railway / Render / Vercel / Docker 等環境專用
+# === ⚙️ 部署平台設定檔（自動生成，不需上傳）===
 railway.json
 render.yaml
 vercel.json
 Dockerfile
 .dockerignore
 
-# === 💻 作業系統與編輯器檔 ===
+# === 💻 作業系統與編輯器設定 ===
 .DS_Store
 Thumbs.db
 .vscode/
@@ -64,7 +66,7 @@ __tests__/
 __mocks__/
 coverage/
 
-# === 🧰 其他保護（避免誤傳秘密資料）===
+# === 🧰 私密與金鑰資料（防止洩漏）===
 *.key
 *.pem
 *.crt
@@ -72,3 +74,10 @@ coverage/
 secrets/
 keys/
 private/
+
+# === ✅ 必須上傳的檔案（確保伺服器可執行）===
+!package.json
+!Procfile
+!.nixpacks.toml
+!server.js
+!README.md
