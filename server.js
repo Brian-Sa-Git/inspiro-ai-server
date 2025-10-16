@@ -1,4 +1,4 @@
-/* === 💎 Inspiro AI · GPT Ultra (整合 Hugging Face Chat + Image + 會員次數限制) === */
+/* === 💎 Inspiro AI · GPT Ultra (整合 Hugging Face Chat + Image + Squarespace 會員同步 + 次數限制) === */
 import express from "express";
 import cors from "cors";
 import bodyParser from "body-parser";
@@ -12,26 +12,30 @@ import path from "path";
 const app = express();
 
 /* === 🌍 CORS 設定：只允許你的網站 === */
-app.use(cors({
-  origin: [
-    "https://amphibian-hyperboloid-z7dj.squarespace.com", // 測試網址
-    "https://www.inspiroai.com" // 正式網域
-  ],
-  credentials: true
-}));
+app.use(
+  cors({
+    origin: [
+      "https://amphibian-hyperboloid-z7dj.squarespace.com", // 測試網址
+      "https://www.inspiroai.com", // 正式網域
+    ],
+    credentials: true,
+  })
+);
 
 /* === 📦 Body Parser：限制 10MB，防止惡意請求 === */
 app.use(bodyParser.json({ limit: "10mb" }));
 
 /* === 🧠 Session 記憶（6 小時）=== */
 const MemoryStore = memorystore(session);
-app.use(session({
-  cookie: { maxAge: 6 * 60 * 60 * 1000 },
-  store: new MemoryStore({ checkPeriod: 6 * 60 * 60 * 1000 }),
-  secret: process.env.SESSION_SECRET || "inspiro-ultra-secret",
-  resave: false,
-  saveUninitialized: true,
-}));
+app.use(
+  session({
+    cookie: { maxAge: 6 * 60 * 60 * 1000 },
+    store: new MemoryStore({ checkPeriod: 6 * 60 * 60 * 1000 }),
+    secret: process.env.SESSION_SECRET || "inspiro-ultra-secret",
+    resave: false,
+    saveUninitialized: true,
+  })
+);
 
 /* === 🔑 環境變數 === */
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
@@ -41,9 +45,9 @@ const TAVILY_API_KEY = process.env.TAVILY_API_KEY || "";
 
 /* === 💎 Inspiro 會員每日圖片次數限制 === */
 const DAILY_LIMITS = {
-  free: 10,     // 免費會員每日10次
-  silver: 25,   // 銀鑽石會員每日25次
-  gold: 999,    // 黃金會員 (預留)
+  free: 10, // 免費會員每日10次
+  silver: 25, // 銀鑽石會員每日25次
+  gold: 999, // 黃金會員每日999次
 };
 
 /* === 🧾 系統提示：精品 AI 風格 === */
@@ -72,9 +76,7 @@ const saveImage = (buf, req) => {
 /* === 💬 Hugging Face Chat 模型（Kimi-K2） === */
 async function chatWithHF(prompt) {
   if (!HF_TOKEN) throw new Error("HF_TOKEN 未設定");
-  const url = "https://router.huggingface.co/v1/chat/completions";
-
-  const r = await fetch(url, {
+  const r = await fetch("https://router.huggingface.co/v1/chat/completions", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${HF_TOKEN}`,
@@ -85,9 +87,9 @@ async function chatWithHF(prompt) {
       messages: [{ role: "user", content: prompt }],
     }),
   });
-
   const data = await r.json();
-  if (!r.ok) throw new Error(`HF Chat 錯誤 (${r.status}): ${JSON.stringify(data)}`);
+  if (!r.ok)
+    throw new Error(`HF Chat 錯誤 (${r.status}): ${JSON.stringify(data)}`);
   return data?.choices?.[0]?.message?.content || "⚠️ 無回覆內容。";
 }
 
@@ -95,14 +97,17 @@ async function chatWithHF(prompt) {
 async function drawWithHF(prompt, options = {}) {
   if (!HF_TOKEN) throw new Error("HF_TOKEN 未設定");
   const model = options.model || "black-forest-labs/FLUX.1-dev";
-  const r = await fetch(`https://api-inference.huggingface.co/models/${model}`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${HF_TOKEN}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ inputs: prompt }),
-  });
+  const r = await fetch(
+    `https://api-inference.huggingface.co/models/${model}`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${HF_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ inputs: prompt }),
+    }
+  );
 
   if (!r.ok) {
     const errText = await r.text();
@@ -144,6 +149,41 @@ app.use(
   })
 );
 
+/* === 👥 Squarespace 會員同步 === */
+app.post("/api/setplan", async (req, res) => {
+  try {
+    const { email, plan } = req.body || {};
+    if (!email) return res.status(400).json({ ok: false, error: "缺少會員 Email" });
+
+    let userPlan = "free";
+    if (/silver/i.test(plan)) userPlan = "silver";
+    if (/gold/i.test(plan)) userPlan = "gold";
+
+    req.session.userEmail = email;
+    req.session.userPlan = userPlan;
+    console.log(`👤 已登入會員：${email}（方案：${userPlan}）`);
+    res.json({ ok: true, userPlan });
+  } catch (err) {
+    console.error("❌ /api/setplan 錯誤", err);
+    res.status(500).json({ ok: false, error: "設定會員方案失敗" });
+  }
+});
+
+/* === 👤 會員資訊查詢 API === */
+app.get("/api/userinfo", (req, res) => {
+  const plan = req.session.userPlan || "free";
+  const used = req.session.usage?.imageCount || 0;
+  const limit = DAILY_LIMITS[plan] || 10;
+  const label =
+    plan === "gold"
+      ? "👑 黃金鑽石會員"
+      : plan === "silver"
+      ? "💠 銀鑽石會員"
+      : "💎 免費會員";
+
+  res.json({ plan, used, limit, label });
+});
+
 /* === 🌍 狀態測試 === */
 app.get("/", (_req, res) => {
   res.send(`✅ Inspiro AI · GPT Ultra 正常運行（Gemini: ${GEMINI_MODEL}）`);
@@ -153,14 +193,16 @@ app.get("/", (_req, res) => {
 app.post("/api/generate", async (req, res) => {
   try {
     const { message, mode, imageOptions } = req.body || {};
-    if (!message?.trim()) return res.status(400).json({ reply: "⚠️ 請輸入內容。" });
+    if (!message?.trim())
+      return res.status(400).json({ reply: "⚠️ 請輸入內容。" });
 
     console.log("🗣️ User message:", message);
     if (!req.session.history) req.session.history = [];
 
-    /* === 🧮 會員生成次數限制 === */
-    if (!req.session.userPlan) req.session.userPlan = "free"; // 預設免費會員
-    if (!req.session.usage) req.session.usage = { imageCount: 0, date: new Date().toDateString() };
+    // 🧮 會員生成次數限制
+    if (!req.session.userPlan) req.session.userPlan = "free";
+    if (!req.session.usage)
+      req.session.usage = { imageCount: 0, date: new Date().toDateString() };
 
     const today = new Date().toDateString();
     if (req.session.usage.date !== today) {
@@ -171,38 +213,54 @@ app.post("/api/generate", async (req, res) => {
     const limit = DAILY_LIMITS[plan] || 10;
     const used = req.session.usage.imageCount;
 
-    /* === 🔍 意圖判斷 === */
+    // 🔍 意圖判斷
     const isImage = /(畫|生成|圖片|插畫|海報|illustration|design|image)/i.test(message);
     const isSearch = /(查詢|搜尋|最新|news|who|when|where)/i.test(message);
-    const isChat = !isImage && !isSearch;
 
-    /* === 🖼️ 圖像生成 === */
+    /* === 🎨 圖片生成 === */
     if (isImage || mode === "image") {
       if (used >= limit) {
         return res.json({
           ok: false,
           mode: "limit",
-          reply: `⚠️ 你的「${plan === "free" ? "免費會員" : plan === "silver" ? "銀鑽石會員" : "黃金會員"}」今日圖片生成次數已用完（${used}/${limit}）。請升級方案或明日再試。`,
+          reply: `⚠️ 你的「${
+            plan === "free"
+              ? "免費會員"
+              : plan === "silver"
+              ? "銀鑽石會員"
+              : "黃金會員"
+          }」今日圖片生成次數已用完（${used}/${limit}）。請升級方案或明日再試。`,
         });
       }
 
-      // 次數 +1
       req.session.usage.imageCount++;
 
-      // 用 Gemini 幫使用者把中文轉為英文 prompt
+      // 用 Gemini 把中文轉英文繪圖提示
       const rPrompt = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            contents: [{ role: "user", parts: [{ text: `${SYS_PROMPT}\n將以下描述轉為具體英文繪圖提示詞：${message}` }] }],
+            contents: [
+              {
+                role: "user",
+                parts: [
+                  {
+                    text: `${SYS_PROMPT}\n請將以下描述轉為具體英文繪圖提示詞：${message}`,
+                  },
+                ],
+              },
+            ],
             generationConfig: { temperature: 0.6, maxOutputTokens: 150 },
           }),
         }
       );
+
       const dataPrompt = await rPrompt.json().catch(() => ({}));
-      const englishPrompt = dataPrompt?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || message;
+      const englishPrompt =
+        dataPrompt?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ||
+        message;
       const finalPrompt = `${englishPrompt}, luxury black-gold aesthetic, cinematic glow, detailed 4K`;
 
       let buffer;
@@ -235,7 +293,7 @@ app.post("/api/generate", async (req, res) => {
     /* === 🌐 搜尋型 === */
     const searchNotes = isSearch ? await webSearch(message) : "";
 
-    /* === 💬 一般文字對話 === */
+    /* === 💬 一般對話 === */
     const context = `
 ${SYS_PROMPT}
 使用者輸入：${message}
@@ -266,6 +324,6 @@ ${searchNotes ? `\n相關資料：\n${searchNotes}` : ""}
 
 /* === 🚀 啟動伺服器 === */
 const PORT = process.env.PORT || 8080;
-app.listen(PORT, () => {
-  console.log(`🚀 Inspiro AI · GPT Ultra 正在執行於 port ${PORT}`);
-});
+app.listen(PORT, () =>
+  console.log(`🚀 Inspiro AI · GPT Ultra 正在執行於 port ${PORT}`)
+);
