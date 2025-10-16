@@ -1,14 +1,12 @@
 {
   "name": "inspiro-ai-server",
-  "version": "3.9.0",
-  "description": "💎 Inspiro AI Server — 整合 Stability + Fal + Hugging Face + Gemini，支援 Squarespace 會員同步與每日限制。",
+  "version": "4.0.0",
+  "description": "💎 Inspiro AI Server — 主力 Stability + 備援 Fal.ai，支援 Squarespace 會員同步。",
   "type": "module",
   "main": "server.js",
   "scripts": {
-    "dev": "nodemon server.js",
     "start": "node server.js",
-    "start:prod": "NODE_ENV=production node server.js",
-    "build": "npm ci --omit=dev && echo '🚀 Inspiro AI v3.9 build complete.'"
+    "dev": "nodemon server.js"
   },
   "dependencies": {
     "express": "^4.19.2",
@@ -16,33 +14,12 @@
     "body-parser": "^1.20.2",
     "express-session": "^1.17.3",
     "memorystore": "^1.6.7",
-    "node-fetch": "^3.3.2",
-    "passport": "^0.7.0",
-    "passport-google-oauth20": "^2.0.0",
-    "passport-facebook": "^3.0.0",
-    "path": "^0.12.7"
+    "node-fetch": "^3.3.2"
   },
   "devDependencies": {
     "nodemon": "^3.1.4"
   },
   "engines": {
     "node": ">=18.0.0"
-  },
-  "keywords": [
-    "inspiro",
-    "ai",
-    "express",
-    "gemini",
-    "huggingface",
-    "stability",
-    "fal-ai",
-    "image-generation",
-    "creative-assistant",
-    "squarespace",
-    "railway",
-    "node-server"
-  ],
-  "author": "Inspiro AI Studio",
-  "license": "MIT",
-  "homepage": "https://www.inspiroai.com"
+  }
 }
