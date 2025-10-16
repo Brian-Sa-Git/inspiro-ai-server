@@ -1,52 +1,47 @@
 {
   "name": "inspiro-ai-server",
-  "version": "3.5.0",
-  "description": "💎 Inspiro AI Server — 優雅靈感創作後端，整合 Stability、Fal、Hugging Face、Gemini，支援會員同步與每日次數限制。",
+  "version": "3.8.0",
+  "description": "💎 Inspiro AI Server — 整合 Stability + Fal + Hugging Face + Gemini，支援 Squarespace 會員同步與每日限制。",
   "type": "module",
   "main": "server.js",
-
   "scripts": {
     "dev": "nodemon server.js",
     "start": "node server.js",
-    "start:prod": "node server.js",
-    "build": "npm ci --omit=dev && echo '🚀 Inspiro AI 已準備完成部署。'",
-    "health": "curl -s https://YOUR_RAILWAY_URL/health || echo '⚠️ Health check failed'",
-    "prepare": "npm prune --omit=dev"
+    "start:prod": "NODE_ENV=production node server.js",
+    "build": "npm ci --omit=dev && echo '🚀 Inspiro AI v3.8 build complete.'"
   },
-
   "dependencies": {
     "express": "^4.19.2",
-    "form-data": "^4.0.0",
     "cors": "^2.8.5",
     "body-parser": "^1.20.2",
     "express-session": "^1.17.3",
     "memorystore": "^1.6.7",
-    "node-fetch": "^3.3.2"
+    "node-fetch": "^3.3.2",
+    "passport": "^0.7.0",
+    "passport-google-oauth20": "^2.0.0",
+    "passport-facebook": "^3.0.0",
+    "path": "^0.12.7"
   },
-
   "devDependencies": {
     "nodemon": "^3.1.4"
   },
-
   "engines": {
-    "node": "18.x"
+    "node": ">=18.0.0"
   },
-
   "keywords": [
     "inspiro",
     "ai",
     "express",
     "gemini",
-    "stability",
-    "fal",
     "huggingface",
+    "stability",
+    "fal-ai",
+    "image-generation",
     "creative-assistant",
-    "luxury-ai",
-    "inspiration",
-    "gpt-ultra",
-    "railway"
+    "squarespace",
+    "railway",
+    "node-server"
   ],
-
   "author": "Inspiro AI Studio",
   "license": "MIT",
   "homepage": "https://www.inspiroai.com"
