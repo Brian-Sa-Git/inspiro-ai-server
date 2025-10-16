@@ -1,6 +1,6 @@
-/* === 💎 Inspiro AI · GPT Ultra Plus v3.6 ===
+/* === 💎 Inspiro AI · GPT Ultra Plus v3.7 ===
    整合 Stability + Fal + Hugging Face + Gemini
-   功能：Squarespace 會員同步、每日次數限制、自動備援與 API Key 偵測
+   功能：Squarespace 會員同步、每日次數限制、自動備援接力與錯誤修復
 ================================================ */
 import express from "express";
 import cors from "cors";
@@ -10,13 +10,11 @@ import memorystore from "memorystore";
 import fetch from "node-fetch";
 import fs from "fs";
 import path from "path";
-import FormData from "form-data"; // ✅ 新增：multipart/form-data 支援
+import FormData from "form-data";
 
 const app = express();
 const DEBUG = true;
-function log(step, msg) {
-  if (DEBUG) console.log(`🪶 [${step}]`, msg);
-}
+function log(step, msg) { if (DEBUG) console.log(`🪶 [${step}]`, msg); }
 
 /* === 🌍 CORS 設定 === */
 app.use(cors({
@@ -60,7 +58,7 @@ const SYS_PROMPT = `
 4️⃣ 所有回覆須自然流暢、有設計感與情感溫度。
 `;
 
-/* === 🧰 基礎函式 === */
+/* === 🧰 工具函式 === */
 const ensureDir = (dir) => { if (!fs.existsSync(dir)) fs.mkdirSync(dir); };
 const saveImage = (buf, req) => {
   const folder = path.join(process.cwd(), "generated");
@@ -72,7 +70,6 @@ const saveImage = (buf, req) => {
 
 /* === 💬 Hugging Face Chat === */
 async function chatWithHF(prompt) {
-  if (!HF_TOKEN) throw new Error("HF_TOKEN 未設定");
   const r = await fetch("https://router.huggingface.co/v1/chat/completions", {
     method: "POST",
     headers: { Authorization: `Bearer ${HF_TOKEN}`, "Content-Type": "application/json" },
@@ -86,10 +83,9 @@ async function chatWithHF(prompt) {
   return data?.choices?.[0]?.message?.content || "⚠️ 無回覆內容。";
 }
 
-/* === 🎨 Stability AI（主引擎・multipart 修正版） === */
+/* === 🎨 Stability AI（主引擎） === */
 async function drawWithStability(prompt) {
   if (!STABILITY_API_KEY) throw new Error("STABILITY_API_KEY 未設定");
-
   const formData = new FormData();
   formData.append("prompt", `${prompt}, luxury black-gold aesthetic, cinematic lighting, ultra-detailed, 4K render`);
   formData.append("width", "768");
@@ -104,7 +100,6 @@ async function drawWithStability(prompt) {
 
   const txt = await res.text();
   if (!res.ok) throw new Error(`Stability AI 錯誤 (${res.status}): ${txt.slice(0, 120)}`);
-
   const data = JSON.parse(txt);
   const base64 = data?.artifacts?.[0]?.base64;
   if (!base64) throw new Error("Stability AI 無返回圖像");
@@ -112,11 +107,10 @@ async function drawWithStability(prompt) {
   return Buffer.from(base64, "base64");
 }
 
-/* === 🎨 Fal.ai 備援（修正路徑） === */
+/* === 🎨 Fal.ai 備援 === */
 async function drawWithFAL(prompt) {
   if (!FAL_TOKEN) throw new Error("FAL_TOKEN 未設定");
-
-  const res = await fetch("https://fal.run/fal-ai/flux-pro/context", { // ✅ 修正：刪掉多餘 fal-ai/
+  const res = await fetch("https://fal.run/fal-ai/flux-pro/context", {
     method: "POST",
     headers: { Authorization: `Key ${FAL_TOKEN}`, "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -130,7 +124,6 @@ async function drawWithFAL(prompt) {
   const imgUrl = data?.images?.[0]?.url;
   if (!imgUrl) throw new Error("Fal.ai 無返回圖片");
   log("Fal.ai 成功 URL", imgUrl);
-
   const imgRes = await fetch(imgUrl);
   return Buffer.from(await imgRes.arrayBuffer());
 }
@@ -168,7 +161,7 @@ app.get("/api/userinfo", (req, res) => {
   res.json({ plan, used, limit, label });
 });
 
-/* === 🎨 /api/generate 主核心 === */
+/* === 🎨 /api/generate 主核心（智慧接力備援版） === */
 app.post("/api/generate", async (req, res) => {
   try {
     const { message, mode } = req.body || {};
@@ -206,19 +199,40 @@ app.post("/api/generate", async (req, res) => {
       const englishPrompt = gData?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || message;
       const finalPrompt = `${englishPrompt}, elegant 4K render, golden accents, cinematic lighting`;
 
-      let buffer;
+      // 🎨 智慧接力生成流程
+      let buffer = null;
+      let engineUsed = null;
+
+      // 1️⃣ Stability
       try {
         buffer = await drawWithStability(finalPrompt);
-        console.log("✅ 使用 Stability AI 成功生成");
-      } catch (e1) {
-        console.warn("⚠️ Stability 失敗 → Fal 備援", e1.message);
+        engineUsed = "Stability AI";
+      } catch (err1) {
+        console.warn("⚠️ Stability 失敗 → Fal 備援", err1.message);
+      }
+
+      // 2️⃣ Fal.ai
+      if (!buffer) {
         try {
           buffer = await drawWithFAL(finalPrompt);
-          console.log("✅ 使用 Fal.ai 成功生成");
-        } catch (e2) {
-          console.warn("⚠️ Fal.ai 也失敗 → Hugging Face 備援", e2.message);
+          engineUsed = "Fal.ai";
+        } catch (err2) {
+          console.warn("⚠️ Fal.ai 失敗 → Hugging Face 備援", err2.message);
+        }
+      }
+
+      // 3️⃣ Hugging Face
+      if (!buffer) {
+        try {
           buffer = await drawWithHF(finalPrompt);
-          console.log("✅ 使用 Hugging Face 成功生成");
+          engineUsed = "Hugging Face";
+        } catch (err3) {
+          console.error("💥 所有生成引擎皆失敗", err3.message);
+          return res.json({
+            ok: false,
+            mode: "error",
+            reply: "⚠️ Inspiro AI 暫時無法生成圖片，請稍後再試。",
+          });
         }
       }
 
@@ -226,6 +240,7 @@ app.post("/api/generate", async (req, res) => {
       return res.json({
         ok: true,
         mode: "image",
+        engine: engineUsed,
         usedPrompt: finalPrompt,
         usedCount: `${req.session.usage.imageCount}/${limit}`,
         imageUrl: url,
@@ -240,6 +255,8 @@ app.post("/api/generate", async (req, res) => {
 
   } catch (err) {
     console.error("💥 /api/generate 錯誤：", err);
+    // 🧹 自動修復 session 狀態
+    if (req.session?.usage) req.session.usage.imageCount = Math.max(0, req.session.usage.imageCount - 1);
     res.status(500).json({
       mode: "error",
       reply: "⚠️ Inspiro AI 暫時無法回覆，請稍後再試。",
@@ -248,7 +265,7 @@ app.post("/api/generate", async (req, res) => {
   }
 });
 
-/* === ❤️ Health Check 與 API Key 狀態 === */
+/* === ❤️ Health Check === */
 app.get("/health", (_req, res) => {
   res.json({
     status: "✅ Inspiro AI 運行中",
@@ -262,4 +279,4 @@ app.get("/health", (_req, res) => {
 
 /* === 🚀 啟動伺服器 === */
 const PORT = process.env.PORT || 8080;
-app.listen(PORT, () => console.log(`🚀 Inspiro AI · GPT Ultra Plus v3.6 正在執行於 port ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 Inspiro AI · GPT Ultra Plus v3.7 正在執行於 port ${PORT}`));
