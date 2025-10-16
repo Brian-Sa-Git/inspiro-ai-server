@@ -1,4 +1,7 @@
-/* === 💎 Inspiro AI · GPT Ultra Plus (整合 Stability + Fal + Hugging Face + Gemini + Squarespace 會員同步 + 次數限制) === */
+/* === 💎 Inspiro AI · GPT Ultra Plus v3.5 ===
+   整合 Stability + Fal + Hugging Face + Gemini
+   功能：Squarespace 會員同步、每日次數限制、自動備援與 API Key 偵測
+================================================ */
 import express from "express";
 import cors from "cors";
 import bodyParser from "body-parser";
@@ -9,6 +12,10 @@ import fs from "fs";
 import path from "path";
 
 const app = express();
+const DEBUG = true; // ✅ 可改成 false 關閉除錯日誌
+function log(step, msg) {
+  if (DEBUG) console.log(`🪶 [${step}]`, msg);
+}
 
 /* === 🌍 CORS 設定 === */
 app.use(cors({
@@ -52,7 +59,7 @@ const SYS_PROMPT = `
 4️⃣ 所有回覆須自然流暢、有設計感與情感溫度。
 `;
 
-/* === 🧰 工具函式 === */
+/* === 🧰 基礎函式 === */
 const ensureDir = (dir) => { if (!fs.existsSync(dir)) fs.mkdirSync(dir); };
 const saveImage = (buf, req) => {
   const folder = path.join(process.cwd(), "generated");
@@ -74,6 +81,7 @@ async function chatWithHF(prompt) {
     }),
   });
   const data = await r.json();
+  log("HF Chat 回傳", data);
   if (!r.ok) throw new Error(`HF Chat 錯誤: ${r.status}`);
   return data?.choices?.[0]?.message?.content || "⚠️ 無回覆內容。";
 }
@@ -81,14 +89,15 @@ async function chatWithHF(prompt) {
 /* === 🎨 Stability AI（主引擎） === */
 async function drawWithStability(prompt) {
   if (!STABILITY_API_KEY) throw new Error("STABILITY_API_KEY 未設定");
-  const res = await fetch("https://api.stability.ai/v2beta/stable-image/text-to-image", {
+  const res = await fetch("https://api.stability.ai/v2beta/stable-image/generate/core", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${STABILITY_API_KEY}`,
       "Content-Type": "application/json",
+      Accept: "application/json",
     },
     body: JSON.stringify({
-      prompt: `${prompt}, luxury black-gold aesthetic, cinematic glow, 4K render`,
+      prompt: `${prompt}, luxury black-gold aesthetic, cinematic glow, ultra-detailed, 4K render`,
       width: 768,
       height: 768,
       cfg_scale: 7,
@@ -96,11 +105,10 @@ async function drawWithStability(prompt) {
       samples: 1,
     }),
   });
-  if (!res.ok) {
-    const txt = await res.text();
-    throw new Error(`Stability AI 錯誤 (${res.status}): ${txt.slice(0, 120)}`);
-  }
-  const data = await res.json();
+  const txt = await res.text();
+  if (!res.ok) throw new Error(`Stability AI 錯誤 (${res.status}): ${txt.slice(0, 120)}`);
+  const data = JSON.parse(txt);
+  log("Stability 回傳", data);
   const base64 = data?.artifacts?.[0]?.base64;
   if (!base64) throw new Error("Stability AI 無返回圖像");
   return Buffer.from(base64, "base64");
@@ -118,8 +126,8 @@ async function drawWithFAL(prompt) {
       guidance_scale: 7,
     }),
   });
-  if (!res.ok) throw new Error(`Fal.ai 錯誤: ${await res.text()}`);
   const data = await res.json();
+  log("Fal.ai 回傳", data);
   const imgUrl = data?.images?.[0]?.url;
   if (!imgUrl) throw new Error("Fal.ai 無返回圖片");
   const imgRes = await fetch(imgUrl);
@@ -134,17 +142,16 @@ async function drawWithHF(prompt) {
     body: JSON.stringify({ inputs: prompt }),
   });
   if (!res.ok) throw new Error(`HF 圖像錯誤: ${await res.text()}`);
-  return Buffer.from(await res.arrayBuffer());
+  const buf = Buffer.from(await res.arrayBuffer());
+  log("HF 圖像成功", buf.length);
+  return buf;
 }
 
 /* === 👥 Squarespace 會員同步 === */
 app.post("/api/setplan", (req, res) => {
   const { email, plan } = req.body || {};
   if (!email) return res.status(400).json({ ok: false, error: "缺少會員 Email" });
-
-  let userPlan = "free";
-  if (/silver/i.test(plan)) userPlan = "silver";
-  if (/gold/i.test(plan)) userPlan = "gold";
+  let userPlan = /silver/i.test(plan) ? "silver" : /gold/i.test(plan) ? "gold" : "free";
   req.session.userEmail = email;
   req.session.userPlan = userPlan;
   console.log(`👤 會員登入：${email}（方案：${userPlan}）`);
@@ -156,9 +163,9 @@ app.get("/api/userinfo", (req, res) => {
   const plan = req.session.userPlan || "free";
   const used = req.session.usage?.imageCount || 0;
   const limit = DAILY_LIMITS[plan];
-  const label = plan === "gold" ? "👑 黃金鑽石會員" :
-                plan === "silver" ? "💠 銀鑽石會員" :
-                "💎 免費會員";
+  const label = plan === "gold" ? "👑 黃金鑽石會員"
+               : plan === "silver" ? "💠 銀鑽石會員"
+               : "💎 免費會員";
   res.json({ plan, used, limit, label });
 });
 
@@ -192,8 +199,7 @@ app.post("/api/generate", async (req, res) => {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            contents: [{ role: "user", parts: [{ text: `${SYS_PROMPT}\n請將以下描述轉為英文繪圖提示：${message}` }] }],
-          }),
+            contents: [{ role: "user", parts: [{ text: `${SYS_PROMPT}\n請將以下描述轉為英文繪圖提示：${message}` }] }], }),
         }
       );
       const gData = await gRes.json().catch(() => ({}));
@@ -203,12 +209,16 @@ app.post("/api/generate", async (req, res) => {
       let buffer;
       try {
         buffer = await drawWithStability(finalPrompt);
+        console.log("✅ 使用 Stability AI 成功生成");
       } catch (e1) {
-        console.warn("⚠️ Stability AI 失敗 → Fal.ai 備援");
-        try { buffer = await drawWithFAL(finalPrompt); }
-        catch (e2) {
-          console.warn("⚠️ Fal.ai 也失敗 → Hugging Face 備援");
+        console.warn("⚠️ Stability AI 失敗 → Fal.ai 備援", e1.message);
+        try {
+          buffer = await drawWithFAL(finalPrompt);
+          console.log("✅ 使用 Fal.ai 成功生成");
+        } catch (e2) {
+          console.warn("⚠️ Fal.ai 也失敗 → Hugging Face 備援", e2.message);
           buffer = await drawWithHF(finalPrompt);
+          console.log("✅ 使用 Hugging Face 成功生成");
         }
       }
 
@@ -238,9 +248,18 @@ app.post("/api/generate", async (req, res) => {
   }
 });
 
-/* === ❤️ Health Check 防止睡眠 === */
-app.get("/health", (_req, res) => res.send("✅ Inspiro AI 伺服器運行中"));
+/* === ❤️ Health Check 與 API Key 狀態 === */
+app.get("/health", (_req, res) => {
+  res.json({
+    status: "✅ Inspiro AI 運行中",
+    stability: !!STABILITY_API_KEY,
+    fal: !!FAL_TOKEN,
+    hf: !!HF_TOKEN,
+    gemini: !!GEMINI_API_KEY,
+    time: new Date().toLocaleString(),
+  });
+});
 
 /* === 🚀 啟動伺服器 === */
 const PORT = process.env.PORT || 8080;
-app.listen(PORT, () => console.log(`🚀 Inspiro AI · GPT Ultra Plus (Stability+Fal+HF) 正在執行於 port ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 Inspiro AI · GPT Ultra Plus v3.5 正在執行於 port ${PORT}`));
