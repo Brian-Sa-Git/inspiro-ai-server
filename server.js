@@ -1,4 +1,4 @@
-/* === 💎 Inspiro AI · v5.0 (會員登入系統 + 雙引擎回覆 + 管理員免限制) ===
+/* === 💎 Inspiro AI · v5.0.1 (修正版：管理員登入保持 + CORS 完整設定) ===
    💬 Gemini + Mistral 雙引擎（智慧文風 / 自由創作）
    🔐 強制登入驗證，未登入者無法使用
    👑 管理員帳號（admin@inspiro.ai / studio@inspiro.ai）免密碼且無限制
@@ -24,13 +24,20 @@ app.use(cors({
     "https://www.inspiroai.com",
     "https://inspiro-ai-server-production.up.railway.app"
   ],
-  credentials: true,
+  credentials: true, // ✅ 允許跨域 cookie
+  methods: ["GET", "POST", "OPTIONS"], // ✅ 防止 Squarespace fetch 被阻擋
+  allowedHeaders: ["Content-Type"]
 }));
+
 app.use(bodyParser.json({ limit: "10mb" }));
 
 app.use(session({
   store: new MemoryStore({ checkPeriod: 6 * 60 * 60 * 1000 }),
-  cookie: { maxAge: 6 * 60 * 60 * 1000 },
+  cookie: {
+    maxAge: 6 * 60 * 60 * 1000, // 6 小時
+    sameSite: "none", // ✅ 允許跨網域 cookie
+    secure: true      // ✅ 只允許 HTTPS（Squarespace / Railway 都是 HTTPS）
+  },
   secret: process.env.SESSION_SECRET || "inspiro-ultra-secret",
   resave: false,
   saveUninitialized: true,
@@ -70,6 +77,7 @@ function isImageRequest(text) {
 
 /* === 🔐 登入狀態檢查 === */
 app.get("/api/session", (req, res) => {
+  console.log("📦 Session 狀態：", req.session.user);
   if (req.session.user) {
     res.json({ loggedIn: true, user: req.session.user });
   } else {
@@ -181,7 +189,7 @@ async function chatWithMistral(message) {
   }
 }
 
-/* === 🎨 圖像生成 (Pollinations / HuggingFace / LocalSD) === */
+/* === 🎨 圖像生成 === */
 async function drawWithPollinations(prompt) {
   console.log("🎨 Pollinations 生成中...");
   const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(
@@ -272,5 +280,5 @@ app.get("/api/health", (_req, res) => {
 /* === 🚀 啟動伺服器 === */
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`🚀 Inspiro AI v5.0 運行中於 port ${PORT}`);
+  console.log(`🚀 Inspiro AI v5.0.1 運行中於 port ${PORT}`);
 });
