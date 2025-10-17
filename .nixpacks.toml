@@ -1,8 +1,14 @@
+# === 💎 Inspiro AI · Railway Nixpacks（v4.3 最終穩定版）===
+# 功能：Node 20+ / 單一安裝階段 / 避免 cache 鎖死
+
 [phases.setup]
 nixPkgs = ["nodejs-20_x"]
 
-[phases.build]
-cmds = ["npm install"]
+[phases.install]
+cmds = ["npm install --omit=dev"]
 
-[phases.start]
+[phases.build]
+cmds = ["echo '🚀 Inspiro AI v4.3 build complete.'"]
+
+[start]
 cmd = "npm start"
