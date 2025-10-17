@@ -1,6 +1,4 @@
-# === 💎 Inspiro AI · Railway Nixpacks（v4.3 最終穩定版）===
-# 功能：Node 20 / 單一安裝階段 / 避免 npm cache 鎖死問題
-
+# === 💎 Inspiro AI · Railway Nixpacks（v4.3 穩定版）===
 [phases.setup]
 nixPkgs = ["nodejs-20_x"]
 
