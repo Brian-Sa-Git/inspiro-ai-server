@@ -34,7 +34,10 @@ app.use(cors({
 
 app.use(bodyParser.json({ limit: "10mb" }));
 
-/* === 🔐 Session 設定 === */
+/* === 🧩 信任 Proxy（Railway 必須加） === */
+app.set("trust proxy", 1);
+
+/* === 🔐 Session 設定（跨域登入用） === */
 app.use(session({
   store: new MemoryStore({ checkPeriod: 6 * 60 * 60 * 1000 }),
   secret: process.env.SESSION_SECRET || "inspiro-ultra-secret",
@@ -42,10 +45,11 @@ app.use(session({
   saveUninitialized: false,
   cookie: {
     maxAge: 6 * 60 * 60 * 1000, // 6 小時
-    sameSite: "none", // 跨域必要
-    secure: true,     // 只允許 HTTPS
+    sameSite: "none",           // ✅ 必加！允許 Squarespace 跨網域 cookie
+    secure: true,               // ✅ 必加！只允許 HTTPS（Railway 是 https）
   }
 }));
+
 
 app.use("/generated", express.static("generated"));
 
