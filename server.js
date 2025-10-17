@@ -1,10 +1,9 @@
-/* === 💎 Inspiro AI · v5.5 (管理員自動登入最終穩定版) ===
-   ✅ 管理員可直接從 Squarespace 使用 AI（免重複登入）
-   ✅ CORS / Cookie / Session 全面修正
-   ✅ 新增全域 Access-Control-Allow-Origin 保證 cookie 回寫
-   ✅ 使用 regenerate + save 寫入 session
+/* === 💎 Inspiro AI · v5.7 (登入優化最終穩定版) ===
+   ✅ 進入網站不需註冊，使用 AI 時才需登入
+   ✅ 支援 Squarespace / Google / Facebook / 自註冊
+   ✅ 管理員免密碼登入
+   ✅ CORS + Cookie + Session 全面穩定
    💬 Gemini + Mistral 雙引擎
-   👑 管理員帳號：admin@inspiro.ai / studio@inspiro.ai
    作者：Inspiro AI Studio（2025）
 =================================================================== */
 
@@ -20,13 +19,12 @@ import path from "path";
 const app = express();
 const MemoryStore = memorystore(session);
 
-/* === ⚙️ 變數設定 === */
+/* === ⚙️ 環境設定 === */
 const isProd = process.env.NODE_ENV === "production";
-const { GEMINI_API_KEY, HF_TOKEN, LOCAL_SD_URL } = process.env;
+const { GEMINI_API_KEY, HF_TOKEN } = process.env;
 const ADMINS = ["admin@inspiro.ai", "studio@inspiro.ai"];
 const users = []; // 模擬會員資料庫
 
-/* === 🧭 Proxy 信任設定 === */
 app.set("trust proxy", 1);
 
 /* === 🌐 CORS 設定 === */
@@ -48,7 +46,7 @@ app.use(cors({
   exposedHeaders: ["set-cookie"],
 }));
 
-/* === ⭐ 讓每個回應都帶上 Access-Control-Allow-Origin === */
+// ⭐ 所有回應都帶上 CORS 標頭
 app.use((req, res, next) => {
   const origin = req.headers.origin;
   if (ALLOWED_ORIGINS.includes(origin)) {
@@ -58,7 +56,6 @@ app.use((req, res, next) => {
   next();
 });
 
-/* === 🌈 preflight 處理 === */
 app.options("*", (req, res) => {
   res.header("Access-Control-Allow-Origin", req.headers.origin || "");
   res.header("Access-Control-Allow-Credentials", "true");
@@ -80,16 +77,16 @@ app.use(session({
   rolling: true,
   cookie: {
     maxAge: 6 * 60 * 60 * 1000, // 6 小時
-    sameSite: "none", // 跨域必要
-    secure: isProd,   // Railway 為 true，本地為 false
-    httpOnly: true,   // 安全
+    sameSite: "none",
+    secure: isProd,
+    httpOnly: true,
   },
 }));
 
-/* === 靜態輸出 === */
+/* === 靜態輸出資料夾 === */
 app.use("/generated", express.static("generated"));
 
-/* === 🧠 Inspiro AI 人格 === */
+/* === Inspiro AI 人格設定 === */
 const INSPIRO_PERSONA = `
 你是「Inspiro AI」，一位優雅、有靈感、具設計感的智能夥伴。
 語氣要溫潤、有詩意、帶有精品氣質。
@@ -109,7 +106,7 @@ function isImageRequest(text) {
   return /(畫|圖|生成|photo|picture|art|illustration|設計|image)/i.test(text);
 }
 
-/* === 檢查登入狀態 === */
+/* === Session 狀態 === */
 app.get("/api/session", (req, res) => {
   console.log("📦 Session 檢查：", req.session.user);
   if (req.session.user) return res.json({ loggedIn: true, user: req.session.user });
@@ -127,7 +124,7 @@ app.post("/api/register", (req, res) => {
   return res.json({ ok: true, msg: "註冊成功，請登入。" });
 });
 
-/* === 登入（管理員免密碼） === */
+/* === 登入（含管理員免密碼） === */
 app.post("/api/login", (req, res) => {
   const { email, password } = req.body || {};
   if (!email) return res.json({ ok: false, msg: "請輸入帳號。" });
@@ -145,7 +142,7 @@ app.post("/api/login", (req, res) => {
     return;
   }
 
-  // 🧍 一般會員
+  // 🧍 一般會員登入
   const user = users.find(u => u.email === email && u.password === password);
   if (!user) return res.json({ ok: false, msg: "帳號或密碼錯誤。" });
 
@@ -153,9 +150,20 @@ app.post("/api/login", (req, res) => {
     if (err) return res.json({ ok: false, msg: "Session 錯誤。" });
     req.session.user = { email, plan: user.plan || "free" };
     req.session.save(() => {
-      console.log("✅ 一般會員登入成功：", email);
-      res.json({ ok: true, msg: "登入成功", role: user.plan });
+      console.log("✅ 會員登入成功：", email);
+      res.json({ ok: true, msg: "登入成功" });
     });
+  });
+});
+
+/* === OAuth 登入（Google / Facebook / Squarespace） === */
+app.post("/api/oauth-login", (req, res) => {
+  const { email } = req.body || {};
+  if (!email) return res.json({ ok: false, msg: "無效的登入資料。" });
+  req.session.user = { email, plan: "free" };
+  req.session.save(() => {
+    console.log("🌐 OAuth 登入成功：", email);
+    res.json({ ok: true, msg: "OAuth 登入成功" });
   });
 });
 
@@ -171,7 +179,7 @@ app.post("/api/logout", (req, res) => {
   });
 });
 
-/* === 需登入的中介層 === */
+/* === 登入檢查中介層（僅生成端點使用） === */
 function requireLogin(req, res, next) {
   if (!req.session.user) {
     return res.status(401).json({
@@ -208,7 +216,6 @@ async function chatWithGemini(message) {
 async function chatWithMistral(message) {
   if (!HF_TOKEN) return null;
   try {
-    const prompt = `${INSPIRO_PERSONA}\n\n請以自由創作語氣回覆：${message}`;
     const r = await fetch("https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.2", {
       method: "POST",
       headers: {
@@ -216,7 +223,7 @@ async function chatWithMistral(message) {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        inputs: prompt,
+        inputs: `${INSPIRO_PERSONA}\n請以自由創作語氣回覆：${message}`,
         parameters: { max_new_tokens: 300, temperature: 0.9 },
       }),
     });
@@ -238,7 +245,7 @@ async function drawWithPollinations(prompt) {
   return Buffer.from(await img.arrayBuffer());
 }
 
-/* === 主生成 API === */
+/* === 主生成端點（需登入） === */
 app.post("/api/generate", requireLogin, async (req, res) => {
   try {
     const { message } = req.body || {};
@@ -255,10 +262,10 @@ app.post("/api/generate", requireLogin, async (req, res) => {
     if (!reply) reply = await chatWithMistral(message);
     if (!reply) reply = "💡 Inspiro AI 正在整理靈感，請稍後再試。";
 
-    return res.json({ ok: true, mode: "text", reply, role: user.plan });
+    res.json({ ok: true, mode: "text", reply, role: user.plan });
   } catch (err) {
     console.error("💥 /api/generate 錯誤：", err);
-    return res.status(500).json({ ok: false, reply: "⚠️ Inspiro AI 暫時無法回覆。" });
+    res.status(500).json({ ok: false, reply: "⚠️ Inspiro AI 暫時無法回覆。" });
   }
 });
 
@@ -277,5 +284,5 @@ app.get("/api/health", (_req, res) => {
 /* === 啟動伺服器 === */
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`🚀 Inspiro AI v5.5 運行中於 port ${PORT}`);
+  console.log(`🚀 Inspiro AI v5.7 運行中於 port ${PORT}`);
 });
