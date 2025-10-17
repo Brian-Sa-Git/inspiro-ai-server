@@ -1,5 +1,5 @@
-/* === 💎 Inspiro AI · v4.6.1 (隱形 Gemini 對話引擎 + 多引擎圖像生成) ===
-   💬 對話核心：Gemini 1.5 Flash（完全隱藏）
+/* === 💎 Inspiro AI · v4.6.2 (隱形 Gemini 對話引擎 + 柔性替代回覆系統) ===
+   💬 對話核心：Gemini 1.5 Flash（隱藏式）
    🎨 圖像生成順序：Pollinations → Hugging Face → Stable Diffusion
    ✨ 品牌人格：Inspiro AI（高質感、精品風）
    作者：Inspiro AI Studio（2025）
@@ -64,7 +64,7 @@ const INSPIRO_PERSONA = `
 對使用者的回覆像是精品顧問、靈感導師，使用中文回覆。
 `;
 
-/* === 🌐 自動翻譯（Pollinations 專用） === */
+/* === 🌐 翻譯工具 === */
 async function translateToEnglish(text) {
   try {
     const res = await fetch(
@@ -128,9 +128,10 @@ async function drawWithLocalSD(prompt) {
   return Buffer.from(data.images[0], "base64");
 }
 
-/* === 💬 Gemini 對話核心 === */
+/* === 💬 Gemini 對話核心（含柔性替代回覆）=== */
 async function chatWithGemini(message) {
-  if (!GEMINI_API_KEY) return "⚠️ Inspiro AI 暫時無法回覆（未設定金鑰）。";
+  if (!GEMINI_API_KEY)
+    return "⚠️ Inspiro AI 暫時無法回覆（未設定金鑰）。";
 
   try {
     const res = await fetch(
@@ -150,13 +151,30 @@ async function chatWithGemini(message) {
     );
 
     const data = await res.json();
-    return (
-      data?.candidates?.[0]?.content?.parts?.[0]?.text ||
-      "💡 Inspiro AI 正在整理靈感，請稍後再試。"
-    ).trim();
+
+    // 🧩 若被內容過濾
+    if (data?.promptFeedback?.blockReason) {
+      console.warn("⚠️ Gemini 安全層觸發，已改為柔性回覆。");
+      return "💡 Inspiro AI 以溫柔的方式避開了敏感靈感，讓我們改以另一種角度繼續創作吧。";
+    }
+
+    // 🧩 若無內容
+    const reply = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || null;
+    if (!reply || reply.length < 3) {
+      console.warn("⚠️ Gemini 無回覆內容，使用柔性替代。");
+      const fallbackReplies = [
+        "💡 Inspiro AI 正在重新編織靈感的線條，稍後將帶來更動人的開場。",
+        "🌙 靈感尚在昇華，讓我們換個方向，從夢的邊緣重新開始。",
+        "✨ 靈感的風還沒吹來，但我能感受到故事即將甦醒的氣息。",
+        "💫 有些故事需要靜默片刻，才能以更迷人的語氣開啟。"
+      ];
+      return fallbackReplies[Math.floor(Math.random() * fallbackReplies.length)];
+    }
+
+    return reply;
   } catch (err) {
     console.error("💥 Gemini 錯誤：", err);
-    return "⚠️ Inspiro AI 暫時無法回覆。";
+    return "💡 Inspiro AI 正在整理靈感，請稍後再試。";
   }
 }
 
@@ -209,9 +227,7 @@ app.post("/api/generate", async (req, res) => {
     return res.json({ ok: true, mode: "text", reply });
   } catch (err) {
     console.error("💥 /api/generate 錯誤：", err);
-    return res
-      .status(500)
-      .json({ ok: false, reply: "⚠️ Inspiro AI 暫時無法回覆。" });
+    return res.status(500).json({ ok: false, reply: "⚠️ Inspiro AI 暫時無法回覆。" });
   }
 });
 
@@ -229,5 +245,5 @@ app.get("/api/health", (_req, res) => {
 /* === 🚀 啟動 === */
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`🚀 Inspiro AI v4.6.1 · Dialogue Core 運行中於 port ${PORT}`);
+  console.log(`🚀 Inspiro AI v4.6.2 · Dialogue Core 運行中於 port ${PORT}`);
 });
