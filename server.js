@@ -1,9 +1,10 @@
-/* === 💎 Inspiro AI · v5.4 (跨網域登入最終穩定版) ===
-   ✅ 修正管理員登入無法保持狀態（Squarespace + Railway）
-   ✅ 使用 regenerate/save 寫入 session，更穩定
-   ✅ CORS + preflight 完整，cookie 可跨網域
+/* === 💎 Inspiro AI · v5.5 (管理員自動登入最終穩定版) ===
+   ✅ 管理員可直接從 Squarespace 使用 AI（免重複登入）
+   ✅ CORS / Cookie / Session 全面修正
+   ✅ 新增全域 Access-Control-Allow-Origin 保證 cookie 回寫
+   ✅ 使用 regenerate + save 寫入 session
    💬 Gemini + Mistral 雙引擎
-   👑 管理員免密碼（admin@inspiro.ai / studio@inspiro.ai）
+   👑 管理員帳號：admin@inspiro.ai / studio@inspiro.ai
    作者：Inspiro AI Studio（2025）
 =================================================================== */
 
@@ -25,10 +26,10 @@ const { GEMINI_API_KEY, HF_TOKEN, LOCAL_SD_URL } = process.env;
 const ADMINS = ["admin@inspiro.ai", "studio@inspiro.ai"];
 const users = []; // 模擬會員資料庫
 
-/* === 🧭 信任 Proxy（Railway 必加） === */
+/* === 🧭 Proxy 信任設定 === */
 app.set("trust proxy", 1);
 
-/* === 🌐 CORS 設定（必含 credentials） === */
+/* === 🌐 CORS 設定 === */
 const ALLOWED_ORIGINS = [
   "https://amphibian-hyperboloid-z7dj.squarespace.com",
   "https://www.inspiroai.com",
@@ -38,7 +39,6 @@ const ALLOWED_ORIGINS = [
 
 app.use(cors({
   origin: (origin, cb) => {
-    // 允許無 Origin 的健康檢查、curl 等
     if (!origin) return cb(null, true);
     cb(null, ALLOWED_ORIGINS.includes(origin));
   },
@@ -46,13 +46,21 @@ app.use(cors({
   methods: ["GET", "POST", "OPTIONS"],
   allowedHeaders: ["Content-Type"],
   exposedHeaders: ["set-cookie"],
-  preflightContinue: false,
 }));
 
-/* 手動處理 preflight，確保 200 並帶上 CORS 標頭 */
+/* === ⭐ 讓每個回應都帶上 Access-Control-Allow-Origin === */
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (ALLOWED_ORIGINS.includes(origin)) {
+    res.header("Access-Control-Allow-Origin", origin);
+    res.header("Access-Control-Allow-Credentials", "true");
+  }
+  next();
+});
+
+/* === 🌈 preflight 處理 === */
 app.options("*", (req, res) => {
   res.header("Access-Control-Allow-Origin", req.headers.origin || "");
-  res.header("Vary", "Origin");
   res.header("Access-Control-Allow-Credentials", "true");
   res.header("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
   res.header("Access-Control-Allow-Headers", "Content-Type");
@@ -61,11 +69,7 @@ app.options("*", (req, res) => {
 
 app.use(bodyParser.json({ limit: "10mb" }));
 
-/* === 🔐 Session 設定（跨網域登入） ===
-   注意：
-   - 不設定 cookie.domain（讓瀏覽器用 host-only 更穩定）
-   - SameSite=None + Secure(只在 prod) 以允許跨站
-*/
+/* === 🔐 Session 設定 === */
 app.use(session({
   store: new MemoryStore({ checkPeriod: 6 * 60 * 60 * 1000 }),
   secret: process.env.SESSION_SECRET || "inspiro-ultra-secret",
@@ -73,27 +77,26 @@ app.use(session({
   resave: false,
   saveUninitialized: false,
   proxy: true,
-  rolling: true, // 有互動就延長有效期
+  rolling: true,
   cookie: {
-    maxAge: 6 * 60 * 60 * 1000,     // 6 小時
-    sameSite: "none",               // 跨網域必須
-    secure: isProd,                 // Railway:true；本地:false
-    httpOnly: true,                 // 更安全（前端無需讀取 cookie）
+    maxAge: 6 * 60 * 60 * 1000, // 6 小時
+    sameSite: "none", // 跨域必要
+    secure: isProd,   // Railway 為 true，本地為 false
+    httpOnly: true,   // 安全
   },
 }));
 
-/* === 靜態輸出資料夾 === */
+/* === 靜態輸出 === */
 app.use("/generated", express.static("generated"));
 
-/* === 人格設定 === */
+/* === 🧠 Inspiro AI 人格 === */
 const INSPIRO_PERSONA = `
 你是「Inspiro AI」，一位優雅、有靈感、具設計感的智能夥伴。
 語氣要溫潤、有詩意、帶有精品氣質。
-不要提及技術、API、模型名稱。
 請用中文回覆。
 `;
 
-/* === 小工具 === */
+/* === 工具函式 === */
 function ensureDir(dir) { if (!fs.existsSync(dir)) fs.mkdirSync(dir); }
 function saveImage(buf, req) {
   const folder = path.join(process.cwd(), "generated");
@@ -106,9 +109,9 @@ function isImageRequest(text) {
   return /(畫|圖|生成|photo|picture|art|illustration|設計|image)/i.test(text);
 }
 
-/* === Session 狀態 === */
+/* === 檢查登入狀態 === */
 app.get("/api/session", (req, res) => {
-  console.log("📦 Session 狀態：", req.session.user);
+  console.log("📦 Session 檢查：", req.session.user);
   if (req.session.user) return res.json({ loggedIn: true, user: req.session.user });
   return res.json({ loggedIn: false });
 });
@@ -124,12 +127,12 @@ app.post("/api/register", (req, res) => {
   return res.json({ ok: true, msg: "註冊成功，請登入。" });
 });
 
-/* === 登入（使用 regenerate + save，確保 session 寫入） === */
+/* === 登入（管理員免密碼） === */
 app.post("/api/login", (req, res) => {
   const { email, password } = req.body || {};
   if (!email) return res.json({ ok: false, msg: "請輸入帳號。" });
 
-  // 管理員免密碼
+  // 👑 管理員免密碼登入
   if (ADMINS.includes(email)) {
     req.session.regenerate(err => {
       if (err) return res.json({ ok: false, msg: "Session 錯誤。" });
@@ -142,7 +145,7 @@ app.post("/api/login", (req, res) => {
     return;
   }
 
-  // 一般會員
+  // 🧍 一般會員
   const user = users.find(u => u.email === email && u.password === password);
   if (!user) return res.json({ ok: false, msg: "帳號或密碼錯誤。" });
 
@@ -159,7 +162,6 @@ app.post("/api/login", (req, res) => {
 /* === 登出 === */
 app.post("/api/logout", (req, res) => {
   req.session.destroy(() => {
-    // 清 cookie 要用相同屬性
     res.clearCookie("inspiro.sid", {
       sameSite: "none",
       secure: isProd,
@@ -169,7 +171,7 @@ app.post("/api/logout", (req, res) => {
   });
 });
 
-/* === 需要登入的中介層 === */
+/* === 需登入的中介層 === */
 function requireLogin(req, res, next) {
   if (!req.session.user) {
     return res.status(401).json({
@@ -226,7 +228,7 @@ async function chatWithMistral(message) {
   }
 }
 
-/* === 圖像生成（先用 Pollinations） === */
+/* === 圖像生成 === */
 async function drawWithPollinations(prompt) {
   const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(
     `${prompt}, luxury black-gold, cinematic lighting`
@@ -236,21 +238,19 @@ async function drawWithPollinations(prompt) {
   return Buffer.from(await img.arrayBuffer());
 }
 
-/* === 主生成端點 === */
+/* === 主生成 API === */
 app.post("/api/generate", requireLogin, async (req, res) => {
   try {
     const { message } = req.body || {};
     const user = req.session.user;
     if (!message?.trim()) return res.json({ ok: false, reply: "⚠️ 請輸入內容。" });
 
-    // 圖像
     if (isImageRequest(message)) {
       const buffer = await drawWithPollinations(message);
       const url = saveImage(buffer, req);
       return res.json({ ok: true, mode: "image", imageUrl: url });
     }
 
-    // 文字
     let reply = await chatWithGemini(message);
     if (!reply) reply = await chatWithMistral(message);
     if (!reply) reply = "💡 Inspiro AI 正在整理靈感，請稍後再試。";
@@ -274,8 +274,8 @@ app.get("/api/health", (_req, res) => {
   });
 });
 
-/* === 啟動 === */
+/* === 啟動伺服器 === */
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`🚀 Inspiro AI v5.4 運行中於 port ${PORT}`);
+  console.log(`🚀 Inspiro AI v5.5 運行中於 port ${PORT}`);
 });
