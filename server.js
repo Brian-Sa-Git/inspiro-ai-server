@@ -1,7 +1,8 @@
-/* === 💎 Inspiro AI · v5.2 (跨網域登入最終修正版) ===
-   ✅ 修正管理員登入會被登出問題（Squarespace + Railway）
-   ✅ 新增開發模式自動切換 cookie.secure
-   💬 Gemini + Mistral 雙引擎（文字＋圖像）
+/* === 💎 Inspiro AI · v5.3 (跨網域登入最終穩定版) ===
+   ✅ 修正管理員登入無法保持狀態（Squarespace + Railway）
+   ✅ 新增本地開發自動切換 secure 模式
+   ✅ 前端後端 session 同步保持
+   💬 Gemini + Mistral 雙引擎
    👑 管理員免密碼登入（admin@inspiro.ai / studio@inspiro.ai）
    作者：Inspiro AI Studio（2025）
 =================================================================== */
@@ -18,49 +19,46 @@ import path from "path";
 const app = express();
 const MemoryStore = memorystore(session);
 
-/* === 🧭 信任 Proxy（Railway / Render 必加） === */
+/* === ⚙️ 變數設定 === */
+const isProd = process.env.NODE_ENV === "production";
+const { GEMINI_API_KEY, HF_TOKEN, LOCAL_SD_URL } = process.env;
+const ADMINS = ["admin@inspiro.ai", "studio@inspiro.ai"];
+const users = []; // 模擬會員資料庫
+
+/* === 🧭 信任 Proxy（Railway 必加） === */
 app.set("trust proxy", 1);
 
-/* === ⚙️ CORS 設定 === */
+/* === 🌐 CORS 設定 === */
 app.use(cors({
   origin: [
     "https://amphibian-hyperboloid-z7dj.squarespace.com",
     "https://www.inspiroai.com",
-    "https://inspiro-ai-server-production.up.railway.app"
+    "https://inspiro-ai-server-production.up.railway.app",
   ],
   credentials: true,
   methods: ["GET", "POST", "OPTIONS"],
   allowedHeaders: ["Content-Type"],
+  exposedHeaders: ["set-cookie"], // ✅ 確保瀏覽器可接收 cookie
 }));
 
 app.use(bodyParser.json({ limit: "10mb" }));
 
-/* === 🔐 Session 設定（跨域登入用） === */
-const isProd = process.env.NODE_ENV === "production";
-
+/* === 🔐 Session 設定（跨網域登入） === */
 app.use(session({
   store: new MemoryStore({ checkPeriod: 6 * 60 * 60 * 1000 }),
   secret: process.env.SESSION_SECRET || "inspiro-ultra-secret",
   resave: false,
   saveUninitialized: false,
+  proxy: true,
   cookie: {
     maxAge: 6 * 60 * 60 * 1000, // 6 小時
-    sameSite: isProd ? "none" : "lax", // 本機測試允許 LAX
-    secure: isProd, // Railway 自動 https，開發時可用 http
-  }
+    sameSite: "none", // ✅ 跨網域必須
+    secure: isProd,   // ✅ Railway 為 true，本地為 false
+    httpOnly: false,  // ✅ 允許前端 JS 讀取 cookie（Squarespace 需要）
+  },
 }));
 
-/* === 靜態圖像資料夾 === */
 app.use("/generated", express.static("generated"));
-
-/* === 🔑 環境變數 === */
-const { GEMINI_API_KEY, HF_TOKEN, LOCAL_SD_URL } = process.env;
-
-/* === 👑 管理員帳號 === */
-const ADMINS = ["admin@inspiro.ai", "studio@inspiro.ai"];
-
-/* === 🧍 模擬會員資料庫 === */
-const users = [];
 
 /* === 🧠 Inspiro AI 人格設定 === */
 const INSPIRO_PERSONA = `
@@ -70,7 +68,7 @@ const INSPIRO_PERSONA = `
 請用中文回覆。
 `;
 
-/* === 🌈 工具函式 === */
+/* === 🌈 工具 === */
 function ensureDir(dir) { if (!fs.existsSync(dir)) fs.mkdirSync(dir); }
 function saveImage(buf, req) {
   const folder = path.join(process.cwd(), "generated");
@@ -83,14 +81,11 @@ function isImageRequest(text) {
   return /(畫|圖|生成|photo|picture|art|illustration|設計|image)/i.test(text);
 }
 
-/* === 🧠 Session 狀態檢查 === */
+/* === 🔍 檢查 Session 狀態 === */
 app.get("/api/session", (req, res) => {
   console.log("📦 Session 狀態：", req.session.user);
-  if (req.session.user) {
-    res.json({ loggedIn: true, user: req.session.user });
-  } else {
-    res.json({ loggedIn: false });
-  }
+  if (req.session.user) res.json({ loggedIn: true, user: req.session.user });
+  else res.json({ loggedIn: false });
 });
 
 /* === 📝 註冊 === */
@@ -98,7 +93,6 @@ app.post("/api/register", (req, res) => {
   const { email, password } = req.body;
   if (!email || !password)
     return res.json({ ok: false, msg: "請輸入完整資料。" });
-
   if (users.find(u => u.email === email))
     return res.json({ ok: false, msg: "此帳號已存在。" });
 
@@ -138,7 +132,7 @@ app.post("/api/logout", (req, res) => {
   });
 });
 
-/* === 🧠 強制登入中介層 === */
+/* === 🧠 登入檢查中介層 === */
 function requireLogin(req, res, next) {
   if (!req.session.user) {
     return res.status(401).json({
@@ -164,7 +158,6 @@ async function chatWithGemini(message) {
       }
     );
     const data = await res.json();
-    if (data?.promptFeedback?.blockReason) return null;
     const reply = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
     return reply?.length > 3 ? reply : null;
   } catch {
@@ -218,14 +211,14 @@ app.post("/api/generate", requireLogin, async (req, res) => {
     const isAdmin = user.plan === "admin";
     if (!message?.trim()) return res.json({ ok: false, reply: "⚠️ 請輸入內容。" });
 
-    // 🎨 圖像請求
+    // 🎨 圖像生成
     if (isImageRequest(message)) {
       const buffer = await drawWithPollinations(message);
       const url = saveImage(buffer, req);
       return res.json({ ok: true, mode: "image", imageUrl: url });
     }
 
-    // 💬 對話請求
+    // 💬 對話生成
     let reply = await chatWithGemini(message);
     if (!reply) reply = await chatWithMistral(message);
     if (!reply) reply = "💡 Inspiro AI 正在整理靈感，請稍後再試。";
@@ -241,10 +234,10 @@ app.post("/api/generate", requireLogin, async (req, res) => {
 app.get("/api/health", (_req, res) => {
   res.json({
     status: "✅ Running",
+    env: isProd ? "production" : "development",
     gemini: !!GEMINI_API_KEY,
     mistral: !!HF_TOKEN,
     admins: ADMINS,
-    env: isProd ? "production" : "development",
     time: new Date().toLocaleString("zh-TW", { timeZone: "Asia/Taipei" }),
   });
 });
@@ -252,5 +245,5 @@ app.get("/api/health", (_req, res) => {
 /* === 🚀 啟動伺服器 === */
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`🚀 Inspiro AI v5.2 運行中於 port ${PORT}`);
+  console.log(`🚀 Inspiro AI v5.3 運行中於 port ${PORT}`);
 });
