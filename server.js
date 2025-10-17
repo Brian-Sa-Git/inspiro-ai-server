@@ -1,4 +1,4 @@
-/* === 💎 Inspiro AI · v4.6 (隱形 Gemini 對話引擎 + 多引擎圖像生成) ===
+/* === 💎 Inspiro AI · v4.6.1 (隱形 Gemini 對話引擎 + 多引擎圖像生成) ===
    💬 對話核心：Gemini 1.5 Flash（完全隱藏）
    🎨 圖像生成順序：Pollinations → Hugging Face → Stable Diffusion
    ✨ 品牌人格：Inspiro AI（高質感、精品風）
@@ -22,6 +22,7 @@ app.use(cors({
   origin: [
     "https://amphibian-hyperboloid-z7dj.squarespace.com",
     "https://www.inspiroai.com",
+    "https://inspiro-ai-server-production.up.railway.app"
   ],
   credentials: true,
 }));
@@ -42,7 +43,7 @@ app.use("/generated", express.static("generated"));
 /* === 🔑 環境變數 === */
 const { GEMINI_API_KEY, LOCAL_SD_URL, HF_TOKEN } = process.env;
 
-/* === 💎 每日限制 === */
+/* === 💎 每日使用限制 === */
 const LIMIT = { free: 10, silver: 25, gold: 999 };
 
 /* === 🎨 工具 === */
@@ -55,7 +56,7 @@ const saveImage = (buf, req) => {
   return `${req.protocol}://${req.get("host")}/generated/${name}`;
 };
 
-/* === 🧠 Inspiro AI 人格設定（品牌語氣）=== */
+/* === 🧠 Inspiro AI 人格設定 === */
 const INSPIRO_PERSONA = `
 你是「Inspiro AI」，一位優雅、有靈感、具設計感的智能夥伴。
 你的語氣要溫潤、有詩意，但不生硬或機械。
@@ -63,10 +64,13 @@ const INSPIRO_PERSONA = `
 對使用者的回覆像是精品顧問、靈感導師，使用中文回覆。
 `;
 
-/* === 🌐 自動翻譯（可選）=== */
+/* === 🌐 自動翻譯（Pollinations 專用） === */
 async function translateToEnglish(text) {
   try {
-    const res = await fetch("https://api.mymemory.translated.net/get?q=" + encodeURIComponent(text) + "&langpair=zh|en");
+    const res = await fetch(
+      "https://api.mymemory.translated.net/get?q=" +
+        encodeURIComponent(text) + "&langpair=zh|en"
+    );
     const data = await res.json();
     return data?.responseData?.translatedText || text;
   } catch {
@@ -74,9 +78,9 @@ async function translateToEnglish(text) {
   }
 }
 
-/* === 🎨 Pollinations 圖像生成 === */
+/* === 🎨 Pollinations === */
 async function drawWithPollinations(prompt) {
-  console.log("🎨 Pollinations 生成...");
+  console.log("🎨 Pollinations 生成中...");
   const translated = await translateToEnglish(prompt);
   const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(
     `${translated}, luxury black-gold, cinematic, soft lighting`
@@ -84,27 +88,35 @@ async function drawWithPollinations(prompt) {
   const img = await fetch(url);
   if (!img.ok) throw new Error("Pollinations 無法生成");
   const buf = Buffer.from(await img.arrayBuffer());
-  console.log("✅ Pollinations 成功生成");
+  console.log("✅ Pollinations 成功生成圖片");
   return buf;
 }
 
-/* === 🎨 Hugging Face 備援圖像生成 === */
+/* === 🎨 Hugging Face 備援 === */
 async function drawWithHFImage(prompt) {
   if (!HF_TOKEN) throw new Error("HF_TOKEN 未設定");
-  console.log("🎨 Hugging Face 生成...");
-  const res = await fetch("https://api-inference.huggingface.co/models/prompthero/openjourney", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${HF_TOKEN}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ inputs: `${prompt}, cinematic lighting, ultra detail` }),
-  });
+  console.log("🎨 Hugging Face 生成中...");
+  const res = await fetch(
+    "https://api-inference.huggingface.co/models/prompthero/openjourney",
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${HF_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        inputs: `${prompt}, cinematic lighting, ultra detail`,
+      }),
+    }
+  );
   if (!res.ok) throw new Error(`Hugging Face 錯誤：${res.status}`);
   return Buffer.from(await res.arrayBuffer());
 }
 
-/* === 🎨 Stable Diffusion 自架（第三層）=== */
+/* === 🎨 Stable Diffusion 備援 === */
 async function drawWithLocalSD(prompt) {
   if (!LOCAL_SD_URL) throw new Error("未設定 LOCAL_SD_URL");
-  console.log("🎨 Stable Diffusion 生成...");
+  console.log("🎨 Stable Diffusion 生成中...");
   const res = await fetch(`${LOCAL_SD_URL}/sdapi/v1/txt2img`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -118,19 +130,34 @@ async function drawWithLocalSD(prompt) {
 
 /* === 💬 Gemini 對話核心 === */
 async function chatWithGemini(message) {
-  if (!GEMINI_API_KEY) return "⚠️ Inspiro AI 暫時無法回覆（未設定 GEMINI_API_KEY）。";
+  if (!GEMINI_API_KEY) return "⚠️ Inspiro AI 暫時無法回覆（未設定金鑰）。";
 
-  const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${GEMINI_API_KEY}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      contents: [{ role: "user", parts: [{ text: `${INSPIRO_PERSONA}\n\n使用者說：${message}` }] }],
-    }),
-  });
+  try {
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${GEMINI_API_KEY}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [
+            {
+              role: "user",
+              parts: [{ text: `${INSPIRO_PERSONA}\n\n使用者說：${message}` }],
+            },
+          ],
+        }),
+      }
+    );
 
-  const data = await res.json();
-  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || "⚠️ Inspiro AI 暫時無法回覆。";
-  return text.trim();
+    const data = await res.json();
+    return (
+      data?.candidates?.[0]?.content?.parts?.[0]?.text ||
+      "💡 Inspiro AI 正在整理靈感，請稍後再試。"
+    ).trim();
+  } catch (err) {
+    console.error("💥 Gemini 錯誤：", err);
+    return "⚠️ Inspiro AI 暫時無法回覆。";
+  }
 }
 
 /* === 🎯 判斷是否為圖像請求 === */
@@ -142,15 +169,19 @@ function isImageRequest(text) {
 app.post("/api/generate", async (req, res) => {
   try {
     const { message } = req.body || {};
-    if (!message?.trim()) return res.status(400).json({ ok: false, reply: "⚠️ 請輸入內容。" });
+    if (!message?.trim())
+      return res.status(400).json({ ok: false, reply: "⚠️ 請輸入內容。" });
 
     if (!req.session.userPlan) req.session.userPlan = "free";
-    const plan = req.session.userPlan;
-    const used = req.session.usage?.imageCount || 0;
+    if (!req.session.usage) req.session.usage = { imageCount: 0 };
 
-    // 🎨 若為圖像請求
+    const plan = req.session.userPlan;
+    const used = req.session.usage.imageCount;
+
+    // 🎨 圖像請求
     if (isImageRequest(message)) {
-      if (used >= LIMIT[plan]) return res.json({ ok: false, reply: "⚠️ 今日已達上限。" });
+      if (used >= LIMIT[plan])
+        return res.json({ ok: false, reply: "⚠️ 今日已達上限。" });
 
       let buffer = null;
       let engine = null;
@@ -164,38 +195,39 @@ app.post("/api/generate", async (req, res) => {
           engine = "Hugging Face";
         } catch {
           buffer = await drawWithLocalSD(message);
-          engine = "Stable Diffusion WebUI";
+          engine = "Stable Diffusion";
         }
       }
 
-      req.session.usage = { imageCount: used + 1 };
+      req.session.usage.imageCount = used + 1;
       const url = saveImage(buffer, req);
       return res.json({ ok: true, mode: "image", engine, imageUrl: url });
     }
 
-    // 💬 若為對話請求 → Gemini 驅動
+    // 💬 對話請求
     const reply = await chatWithGemini(message);
-    res.json({ ok: true, mode: "text", reply });
-
+    return res.json({ ok: true, mode: "text", reply });
   } catch (err) {
     console.error("💥 /api/generate 錯誤：", err);
-    res.status(500).json({ ok: false, reply: "⚠️ Inspiro AI 暫時無法回覆。" });
+    return res
+      .status(500)
+      .json({ ok: false, reply: "⚠️ Inspiro AI 暫時無法回覆。" });
   }
 });
 
 /* === ❤️ 健康檢查 === */
-app.get("/health", (_req, res) => {
+app.get("/api/health", (_req, res) => {
   res.json({
     status: "✅ Running",
     gemini: !!GEMINI_API_KEY,
     hf: !!HF_TOKEN,
     local_sd: !!LOCAL_SD_URL,
-    time: new Date().toLocaleString(),
+    time: new Date().toLocaleString("zh-TW", { timeZone: "Asia/Taipei" }),
   });
 });
 
 /* === 🚀 啟動 === */
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`🚀 Inspiro AI v4.6 · Gemini Dialogue Core 運行中於 port ${PORT}`);
+  console.log(`🚀 Inspiro AI v4.6.1 · Dialogue Core 運行中於 port ${PORT}`);
 });
