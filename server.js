@@ -1,7 +1,7 @@
-/* === 💎 Inspiro AI · v5.0.1 (修正版：管理員登入保持 + CORS 完整設定) ===
-   💬 Gemini + Mistral 雙引擎（智慧文風 / 自由創作）
-   🔐 強制登入驗證，未登入者無法使用
-   👑 管理員帳號（admin@inspiro.ai / studio@inspiro.ai）免密碼且無限制
+/* === 💎 Inspiro AI · v5.1 (跨網域登入修正版) ===
+   ✅ 修正管理員無法保持登入問題（Squarespace + Railway）
+   💬 Gemini + Mistral 雙引擎
+   👑 管理員免密碼登入（admin@inspiro.ai / studio@inspiro.ai）
    作者：Inspiro AI Studio（2025）
 =================================================================== */
 
@@ -17,30 +17,34 @@ import path from "path";
 const app = express();
 const MemoryStore = memorystore(session);
 
-/* === ⚙️ 基本設定 === */
+/* === 🧭 信任 Proxy（Railway / Render 必加） === */
+app.set("trust proxy", 1);
+
+/* === ⚙️ CORS 設定 === */
 app.use(cors({
   origin: [
     "https://amphibian-hyperboloid-z7dj.squarespace.com",
     "https://www.inspiroai.com",
     "https://inspiro-ai-server-production.up.railway.app"
   ],
-  credentials: true, // ✅ 允許跨域 cookie
-  methods: ["GET", "POST", "OPTIONS"], // ✅ 防止 Squarespace fetch 被阻擋
-  allowedHeaders: ["Content-Type"]
+  credentials: true,
+  methods: ["GET", "POST", "OPTIONS"],
+  allowedHeaders: ["Content-Type"],
 }));
 
 app.use(bodyParser.json({ limit: "10mb" }));
 
+/* === 🔐 Session 設定 === */
 app.use(session({
   store: new MemoryStore({ checkPeriod: 6 * 60 * 60 * 1000 }),
-  cookie: {
-    maxAge: 6 * 60 * 60 * 1000, // 6 小時
-    sameSite: "none", // ✅ 允許跨網域 cookie
-    secure: true      // ✅ 只允許 HTTPS（Squarespace / Railway 都是 HTTPS）
-  },
   secret: process.env.SESSION_SECRET || "inspiro-ultra-secret",
   resave: false,
-  saveUninitialized: true,
+  saveUninitialized: false,
+  cookie: {
+    maxAge: 6 * 60 * 60 * 1000, // 6 小時
+    sameSite: "none", // 跨域必要
+    secure: true,     // 只允許 HTTPS
+  }
 }));
 
 app.use("/generated", express.static("generated"));
@@ -52,7 +56,7 @@ const { GEMINI_API_KEY, HF_TOKEN, LOCAL_SD_URL } = process.env;
 const ADMINS = ["admin@inspiro.ai", "studio@inspiro.ai"];
 
 /* === 🧍 模擬會員資料庫 === */
-const users = []; // { email, password, plan }
+const users = [];
 
 /* === 🧠 Inspiro AI 人格設定 === */
 const INSPIRO_PERSONA = `
@@ -62,7 +66,7 @@ const INSPIRO_PERSONA = `
 請用中文回覆。
 `;
 
-/* === 🌈 工具函式 === */
+/* === 🌈 工具 === */
 function ensureDir(dir) { if (!fs.existsSync(dir)) fs.mkdirSync(dir); }
 function saveImage(buf, req) {
   const folder = path.join(process.cwd(), "generated");
@@ -75,7 +79,7 @@ function isImageRequest(text) {
   return /(畫|圖|生成|photo|picture|art|illustration|設計|image)/i.test(text);
 }
 
-/* === 🔐 登入狀態檢查 === */
+/* === 🔐 Session 檢查 === */
 app.get("/api/session", (req, res) => {
   console.log("📦 Session 狀態：", req.session.user);
   if (req.session.user) {
@@ -139,7 +143,7 @@ function requireLogin(req, res, next) {
   next();
 }
 
-/* === 💬 Gemini 對話核心 === */
+/* === 💬 Gemini 對話 === */
 async function chatWithGemini(message) {
   if (!GEMINI_API_KEY) return null;
   try {
@@ -200,39 +204,6 @@ async function drawWithPollinations(prompt) {
   return Buffer.from(await img.arrayBuffer());
 }
 
-async function drawWithHFImage(prompt) {
-  if (!HF_TOKEN) throw new Error("HF_TOKEN 未設定");
-  console.log("🎨 Hugging Face 生成中...");
-  const res = await fetch(
-    "https://api-inference.huggingface.co/models/prompthero/openjourney",
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${HF_TOKEN}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        inputs: `${prompt}, cinematic lighting, ultra detail`,
-      }),
-    }
-  );
-  if (!res.ok) throw new Error("Hugging Face 生成失敗");
-  return Buffer.from(await res.arrayBuffer());
-}
-
-async function drawWithLocalSD(prompt) {
-  if (!LOCAL_SD_URL) throw new Error("未設定 LOCAL_SD_URL");
-  console.log("🎨 Stable Diffusion 生成中...");
-  const res = await fetch(`${LOCAL_SD_URL}/sdapi/v1/txt2img`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt, steps: 25, width: 768, height: 768 }),
-  });
-  const data = await res.json();
-  if (!data.images?.[0]) throw new Error("本地 SD 無返回圖像");
-  return Buffer.from(data.images[0], "base64");
-}
-
 /* === 💬 /api/generate === */
 app.post("/api/generate", requireLogin, async (req, res) => {
   try {
@@ -241,20 +212,14 @@ app.post("/api/generate", requireLogin, async (req, res) => {
     const isAdmin = user.plan === "admin";
     if (!message?.trim()) return res.json({ ok: false, reply: "⚠️ 請輸入內容。" });
 
-    // 🎨 圖像生成請求
+    // 🎨 圖像請求
     if (isImageRequest(message)) {
-      if (!isAdmin && (user.usage || 0) >= 10)
-        return res.json({ ok: false, reply: "⚠️ 免費會員今日已達上限。" });
-      let buffer;
-      try { buffer = await drawWithPollinations(message); }
-      catch { try { buffer = await drawWithHFImage(message); }
-      catch { buffer = await drawWithLocalSD(message); } }
-      user.usage = (user.usage || 0) + 1;
+      let buffer = await drawWithPollinations(message);
       const url = saveImage(buffer, req);
       return res.json({ ok: true, mode: "image", imageUrl: url });
     }
 
-    // 💬 對話生成請求
+    // 💬 對話請求
     let reply = await chatWithGemini(message);
     if (!reply) reply = await chatWithMistral(message);
     if (!reply) reply = "💡 Inspiro AI 正在整理靈感，請稍後再試。";
@@ -280,5 +245,5 @@ app.get("/api/health", (_req, res) => {
 /* === 🚀 啟動伺服器 === */
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`🚀 Inspiro AI v5.0.1 運行中於 port ${PORT}`);
+  console.log(`🚀 Inspiro AI v5.1 運行中於 port ${PORT}`);
 });
