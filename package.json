@@ -1,6 +1,6 @@
 {
   "name": "inspiro-ai-server",
-  "version": "4.3.1",
+  "version": "4.3.2",
   "description": "💎 Inspiro AI Server — 智慧雙模式：對話 + 圖像生成（主力 Stability，備援 Fal.ai，整合 Hugging Face 對話與 Squarespace 會員同步）。",
   "type": "module",
   "main": "server.js",
