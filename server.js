@@ -1,6 +1,7 @@
-/* === 💎 Inspiro AI · v5.1 (跨網域登入修正版) ===
-   ✅ 修正管理員無法保持登入問題（Squarespace + Railway）
-   💬 Gemini + Mistral 雙引擎
+/* === 💎 Inspiro AI · v5.2 (跨網域登入最終修正版) ===
+   ✅ 修正管理員登入會被登出問題（Squarespace + Railway）
+   ✅ 新增開發模式自動切換 cookie.secure
+   💬 Gemini + Mistral 雙引擎（文字＋圖像）
    👑 管理員免密碼登入（admin@inspiro.ai / studio@inspiro.ai）
    作者：Inspiro AI Studio（2025）
 =================================================================== */
@@ -34,10 +35,9 @@ app.use(cors({
 
 app.use(bodyParser.json({ limit: "10mb" }));
 
-/* === 🧩 信任 Proxy（Railway 必須加） === */
-app.set("trust proxy", 1);
-
 /* === 🔐 Session 設定（跨域登入用） === */
+const isProd = process.env.NODE_ENV === "production";
+
 app.use(session({
   store: new MemoryStore({ checkPeriod: 6 * 60 * 60 * 1000 }),
   secret: process.env.SESSION_SECRET || "inspiro-ultra-secret",
@@ -45,12 +45,12 @@ app.use(session({
   saveUninitialized: false,
   cookie: {
     maxAge: 6 * 60 * 60 * 1000, // 6 小時
-    sameSite: "none",           // ✅ 必加！允許 Squarespace 跨網域 cookie
-    secure: true,               // ✅ 必加！只允許 HTTPS（Railway 是 https）
+    sameSite: isProd ? "none" : "lax", // 本機測試允許 LAX
+    secure: isProd, // Railway 自動 https，開發時可用 http
   }
 }));
 
-
+/* === 靜態圖像資料夾 === */
 app.use("/generated", express.static("generated"));
 
 /* === 🔑 環境變數 === */
@@ -70,7 +70,7 @@ const INSPIRO_PERSONA = `
 請用中文回覆。
 `;
 
-/* === 🌈 工具 === */
+/* === 🌈 工具函式 === */
 function ensureDir(dir) { if (!fs.existsSync(dir)) fs.mkdirSync(dir); }
 function saveImage(buf, req) {
   const folder = path.join(process.cwd(), "generated");
@@ -83,7 +83,7 @@ function isImageRequest(text) {
   return /(畫|圖|生成|photo|picture|art|illustration|設計|image)/i.test(text);
 }
 
-/* === 🔐 Session 檢查 === */
+/* === 🧠 Session 狀態檢查 === */
 app.get("/api/session", (req, res) => {
   console.log("📦 Session 狀態：", req.session.user);
   if (req.session.user) {
@@ -132,8 +132,10 @@ app.post("/api/login", (req, res) => {
 
 /* === 🚪 登出 === */
 app.post("/api/logout", (req, res) => {
-  req.session.destroy();
-  res.json({ ok: true, msg: "已登出。" });
+  req.session.destroy(() => {
+    res.clearCookie("connect.sid");
+    res.json({ ok: true, msg: "已登出。" });
+  });
 });
 
 /* === 🧠 強制登入中介層 === */
@@ -218,7 +220,7 @@ app.post("/api/generate", requireLogin, async (req, res) => {
 
     // 🎨 圖像請求
     if (isImageRequest(message)) {
-      let buffer = await drawWithPollinations(message);
+      const buffer = await drawWithPollinations(message);
       const url = saveImage(buffer, req);
       return res.json({ ok: true, mode: "image", imageUrl: url });
     }
@@ -242,6 +244,7 @@ app.get("/api/health", (_req, res) => {
     gemini: !!GEMINI_API_KEY,
     mistral: !!HF_TOKEN,
     admins: ADMINS,
+    env: isProd ? "production" : "development",
     time: new Date().toLocaleString("zh-TW", { timeZone: "Asia/Taipei" }),
   });
 });
@@ -249,5 +252,5 @@ app.get("/api/health", (_req, res) => {
 /* === 🚀 啟動伺服器 === */
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`🚀 Inspiro AI v5.1 運行中於 port ${PORT}`);
+  console.log(`🚀 Inspiro AI v5.2 運行中於 port ${PORT}`);
 });
