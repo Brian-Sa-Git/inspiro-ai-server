@@ -1,9 +1,9 @@
-/* === 💎 Inspiro AI · GPT Ultra Plus v4.3 (智慧雙模式：對話 + 圖像生成) ===
-   功能：自動判斷使用者是要「聊天」或「生成圖片」
-   主力 Stability AI（圖像）+ 備援 Fal.ai
+/* === 💎 Inspiro AI · GPT Ultra Plus v4.4 (智慧多引擎模式：對話 + 圖像生成) ===
+   功能：自動判斷聊天或生成圖片
+   圖像生成順序：Pollinations → Hugging Face → Stable Diffusion（自架）
    對話模式使用 Hugging Face (Kimi-K2)
    作者：Inspiro AI Studio（2025）
-=========================================================== */
+=================================================================== */
 
 import express from "express";
 import cors from "cors";
@@ -13,7 +13,6 @@ import memorystore from "memorystore";
 import fetch from "node-fetch";
 import fs from "fs";
 import path from "path";
-import { FormData } from "node-fetch"; // ✅ 使用 Node 內建 FormData
 
 /* === 🏗️ 初始化 === */
 const app = express();
@@ -41,7 +40,7 @@ app.use(session({
 app.use("/generated", express.static("generated"));
 
 /* === 🔑 環境變數 === */
-const { STABILITY_API_KEY, FAL_TOKEN, HF_TOKEN } = process.env;
+const { HF_TOKEN, LOCAL_SD_URL } = process.env;
 
 /* === 💎 每日限制 === */
 const LIMIT = { free: 10, silver: 25, gold: 999 };
@@ -50,7 +49,6 @@ const LIMIT = { free: 10, silver: 25, gold: 999 };
 const SYS_PROMPT = `
 你是「Inspiro AI」，一位優雅、有靈感、具設計感的智能助理。
 請用高質感、溫柔、有靈性的語氣回答。
-避免提到技術、API、模型名稱。
 `;
 
 /* === 🧰 工具 === */
@@ -63,55 +61,54 @@ const saveImage = (buf, req) => {
   return `${req.protocol}://${req.get("host")}/generated/${name}`;
 };
 
-/* === 🎨 Stability AI 圖像生成（修正版）=== */
-async function drawWithStability(prompt) {
-  const form = new FormData();
-  form.append("prompt", `${prompt}, luxury black-gold aesthetic, cinematic lighting, ultra detail, 4K render`);
-  form.append("output_format", "png");
-  form.append("width", "768");
-  form.append("height", "768");
-  form.append("cfg_scale", "7");
-
-  const res = await fetch("https://api.stability.ai/v2beta/stable-image/generate/core", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${STABILITY_API_KEY}`,
-      Accept: "application/json", // ✅ 加上這個 header
-    },
-    body: form,
-  });
-
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`Stability 錯誤 (${res.status}): ${errText.slice(0, 200)}`);
-  }
-
-  const data = await res.json();
-  const base64 = data?.artifacts?.[0]?.base64;
-  if (!base64) throw new Error("⚠️ Stability 無返回圖像");
-  console.log("✅ Stability 成功生成");
-  return Buffer.from(base64, "base64");
+/* === 🎨 1️⃣ Pollinations.AI 免費生成 === */
+async function drawWithPollinations(prompt) {
+  console.log("🎨 使用 Pollinations.AI 生成...");
+  const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(
+    `${prompt}, luxury black-gold aesthetic, cinematic lighting`
+  )}`;
+  const img = await fetch(url);
+  if (!img.ok) throw new Error("Pollinations 無法生成");
+  const buf = Buffer.from(await img.arrayBuffer());
+  console.log("✅ Pollinations 成功生成");
+  return buf;
 }
 
-/* === 🎨 Fal.ai 備援引擎 === */
-async function drawWithFal(prompt) {
-  const res = await fetch("https://fal.run/fal-ai/flux-pro", {
+/* === 🎨 2️⃣ Hugging Face Inference API === */
+async function drawWithHFImage(prompt) {
+  console.log("🎨 使用 Hugging Face 生成圖片...");
+  const res = await fetch("https://api-inference.huggingface.co/models/prompthero/openjourney", {
     method: "POST",
-    headers: { Authorization: `Key ${FAL_TOKEN}`, "Content-Type": "application/json" },
+    headers: {
+      Authorization: `Bearer ${HF_TOKEN}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ inputs: `${prompt}, cinematic lighting, ultra detail, 4K` }),
+  });
+  if (!res.ok) throw new Error(`HuggingFace 錯誤：${res.status}`);
+  const buf = Buffer.from(await res.arrayBuffer());
+  console.log("✅ Hugging Face 成功生成圖片");
+  return buf;
+}
+
+/* === 🎨 3️⃣ Stable Diffusion WebUI（自架伺服器） === */
+async function drawWithLocalSD(prompt) {
+  if (!LOCAL_SD_URL) throw new Error("未設定 LOCAL_SD_URL");
+  console.log("🎨 使用本地 Stable Diffusion WebUI 生成...");
+  const res = await fetch(`${LOCAL_SD_URL}/sdapi/v1/txt2img`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      prompt: `${prompt}, cinematic golden light, black luxury aesthetic, detailed render`,
-      num_inference_steps: 25,
-      guidance_scale: 7,
+      prompt: `${prompt}, luxury black-gold, ultra detail, cinematic`,
+      steps: 25,
+      width: 768,
+      height: 768,
     }),
   });
-
-  const data = await res.json().catch(() => ({}));
-  const imgUrl = data?.images?.[0]?.url;
-  if (!imgUrl) throw new Error("Fal.ai 無圖片 URL");
-  console.log("✅ Fal.ai 成功生成圖片 URL");
-
-  const imgRes = await fetch(imgUrl);
-  return Buffer.from(await imgRes.arrayBuffer());
+  const data = await res.json();
+  if (!data.images?.[0]) throw new Error("本地 SD 無返回圖像");
+  console.log("✅ Stable Diffusion WebUI 成功生成圖片");
+  return Buffer.from(data.images[0], "base64");
 }
 
 /* === 💬 Hugging Face 對話模型 === */
@@ -130,14 +127,13 @@ async function chatWithHF(message) {
       ],
     }),
   });
-
   const data = await res.json();
   return data?.choices?.[0]?.message?.content || "⚠️ Inspiro AI 暫時無法回覆。";
 }
 
-/* === 🎯 智慧模式判斷 === */
+/* === 🎯 判斷是否為圖像請求 === */
 function isImageRequest(text) {
-  return /(畫|圖|image|插畫|設計|生成|photo|picture|art|illustration)/i.test(text);
+  return /(畫|圖|生成|photo|picture|art|illustration|city|design)/i.test(text);
 }
 
 /* === 🎨 主生成 API === */
@@ -146,28 +142,32 @@ app.post("/api/generate", async (req, res) => {
     const { message } = req.body || {};
     if (!message?.trim()) return res.status(400).json({ ok: false, reply: "⚠️ 請輸入內容。" });
 
-    // 初始化 session
     if (!req.session.userPlan) req.session.userPlan = "free";
     const plan = req.session.userPlan;
     const used = req.session.usage?.imageCount || 0;
 
-    // 圖像模式判斷
+    // 🎨 圖像模式
     if (isImageRequest(message)) {
       if (used >= LIMIT[plan]) return res.json({ ok: false, reply: "⚠️ 今日已達上限。" });
 
       let buffer = null;
       let engine = null;
+
       try {
-        buffer = await drawWithStability(message);
-        engine = "Stability AI";
-      } catch (e) {
-        console.warn("⚠️ Stability 失敗，切換 Fal.ai...");
+        buffer = await drawWithPollinations(message);
+        engine = "Pollinations.AI";
+      } catch {
         try {
-          buffer = await drawWithFal(message);
-          engine = "Fal.ai";
-        } catch (err2) {
-          console.error("💥 Fal.ai 也失敗：", err2.message);
-          return res.json({ ok: false, reply: "⚠️ Inspiro AI 暫時無法生成圖片，請稍後再試。" });
+          buffer = await drawWithHFImage(message);
+          engine = "Hugging Face";
+        } catch {
+          try {
+            buffer = await drawWithLocalSD(message);
+            engine = "Stable Diffusion WebUI";
+          } catch (err3) {
+            console.error("💥 三層備援全失敗：", err3.message);
+            return res.json({ ok: false, reply: "⚠️ Inspiro AI 無法生成圖片，請稍後再試。" });
+          }
         }
       }
 
@@ -188,7 +188,7 @@ app.post("/api/generate", async (req, res) => {
 
   } catch (err) {
     console.error("💥 /api/generate 錯誤：", err);
-    res.status(500).json({ ok: false, reply: "⚠️ Inspiro AI 暫時無法回覆，請稍後再試。" });
+    res.status(500).json({ ok: false, reply: "⚠️ Inspiro AI 暫時無法回覆。" });
   }
 });
 
@@ -196,9 +196,8 @@ app.post("/api/generate", async (req, res) => {
 app.get("/health", (_req, res) => {
   res.json({
     status: "✅ Running",
-    stability: !!STABILITY_API_KEY,
-    fal: !!FAL_TOKEN,
     hf: !!HF_TOKEN,
+    local_sd: !!LOCAL_SD_URL,
     time: new Date().toLocaleString(),
   });
 });
@@ -206,5 +205,5 @@ app.get("/health", (_req, res) => {
 /* === 🚀 啟動 === */
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`🚀 Inspiro AI v4.3 · 對話 + 圖像模式 運行中於 port ${PORT}`);
+  console.log(`🚀 Inspiro AI v4.4 · 多引擎對話+圖像模式 運行中於 port ${PORT}`);
 });
