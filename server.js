@@ -1,10 +1,8 @@
-/* === 💎 Inspiro AI · GPT Ultra Plus v4.5 (智慧多引擎模式：對話 + 圖像生成) ===
-   🧠 功能：
-   - 自動判斷「聊天」或「生成圖片」
-   - 圖像引擎順序：Pollinations → Hugging Face → Stable Diffusion（自架）
-   - 自動將中文翻譯成英文以提升生成準確度
-   - 對話模式使用 Hugging Face (Kimi-K2)
-   ✨ 作者：Inspiro AI Studio（2025）
+/* === 💎 Inspiro AI · v4.6 (隱形 Gemini 對話引擎 + 多引擎圖像生成) ===
+   💬 對話核心：Gemini 1.5 Flash（完全隱藏）
+   🎨 圖像生成順序：Pollinations → Hugging Face → Stable Diffusion
+   ✨ 品牌人格：Inspiro AI（高質感、精品風）
+   作者：Inspiro AI Studio（2025）
 =================================================================== */
 
 import express from "express";
@@ -42,18 +40,12 @@ app.use(session({
 app.use("/generated", express.static("generated"));
 
 /* === 🔑 環境變數 === */
-const { HF_TOKEN, LOCAL_SD_URL } = process.env;
+const { GEMINI_API_KEY, LOCAL_SD_URL, HF_TOKEN } = process.env;
 
 /* === 💎 每日限制 === */
 const LIMIT = { free: 10, silver: 25, gold: 999 };
 
-/* === 🧠 系統人格提示 === */
-const SYS_PROMPT = `
-你是「Inspiro AI」，一位優雅、有靈感、具設計感的智能助理。
-請用高質感、溫柔、有靈性的語氣回答。
-`;
-
-/* === 🧰 工具 === */
+/* === 🎨 工具 === */
 const ensureDir = (dir) => { if (!fs.existsSync(dir)) fs.mkdirSync(dir); };
 const saveImage = (buf, req) => {
   const folder = path.join(process.cwd(), "generated");
@@ -63,23 +55,31 @@ const saveImage = (buf, req) => {
   return `${req.protocol}://${req.get("host")}/generated/${name}`;
 };
 
-/* === 🌐 自動翻譯（簡易英翻中）=== */
+/* === 🧠 Inspiro AI 人格設定（品牌語氣）=== */
+const INSPIRO_PERSONA = `
+你是「Inspiro AI」，一位優雅、有靈感、具設計感的智能夥伴。
+你的語氣要溫潤、有詩意，但不生硬或機械。
+不要提到技術、API、模型名稱。
+對使用者的回覆像是精品顧問、靈感導師，使用中文回覆。
+`;
+
+/* === 🌐 自動翻譯（可選）=== */
 async function translateToEnglish(text) {
   try {
     const res = await fetch("https://api.mymemory.translated.net/get?q=" + encodeURIComponent(text) + "&langpair=zh|en");
     const data = await res.json();
     return data?.responseData?.translatedText || text;
   } catch {
-    return text; // 若翻譯失敗則回傳原文
+    return text;
   }
 }
 
-/* === 🎨 1️⃣ Pollinations.AI 免費生成 === */
+/* === 🎨 Pollinations 圖像生成 === */
 async function drawWithPollinations(prompt) {
-  console.log("🎨 使用 Pollinations.AI 生成...");
+  console.log("🎨 Pollinations 生成...");
   const translated = await translateToEnglish(prompt);
   const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(
-    `${translated}, luxury black-gold aesthetic, cinematic lighting`
+    `${translated}, luxury black-gold, cinematic, soft lighting`
   )}`;
   const img = await fetch(url);
   if (!img.ok) throw new Error("Pollinations 無法生成");
@@ -88,73 +88,57 @@ async function drawWithPollinations(prompt) {
   return buf;
 }
 
-/* === 🎨 2️⃣ Hugging Face Inference API === */
+/* === 🎨 Hugging Face 備援圖像生成 === */
 async function drawWithHFImage(prompt) {
-  if (!HF_TOKEN) throw new Error("未設定 HF_TOKEN");
-  console.log("🎨 使用 Hugging Face 生成圖片...");
-  const translated = await translateToEnglish(prompt);
+  if (!HF_TOKEN) throw new Error("HF_TOKEN 未設定");
+  console.log("🎨 Hugging Face 生成...");
   const res = await fetch("https://api-inference.huggingface.co/models/prompthero/openjourney", {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${HF_TOKEN}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ inputs: `${translated}, cinematic lighting, ultra detail, 4K` }),
+    headers: { Authorization: `Bearer ${HF_TOKEN}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ inputs: `${prompt}, cinematic lighting, ultra detail` }),
   });
   if (!res.ok) throw new Error(`Hugging Face 錯誤：${res.status}`);
-  const buf = Buffer.from(await res.arrayBuffer());
-  console.log("✅ Hugging Face 成功生成圖片");
-  return buf;
+  return Buffer.from(await res.arrayBuffer());
 }
 
-/* === 🎨 3️⃣ Stable Diffusion WebUI（自架伺服器） === */
+/* === 🎨 Stable Diffusion 自架（第三層）=== */
 async function drawWithLocalSD(prompt) {
   if (!LOCAL_SD_URL) throw new Error("未設定 LOCAL_SD_URL");
-  console.log("🎨 使用本地 Stable Diffusion WebUI 生成...");
-  const translated = await translateToEnglish(prompt);
+  console.log("🎨 Stable Diffusion 生成...");
   const res = await fetch(`${LOCAL_SD_URL}/sdapi/v1/txt2img`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      prompt: `${translated}, luxury black-gold, ultra detail, cinematic`,
-      steps: 25,
-      width: 768,
-      height: 768,
-    }),
+    body: JSON.stringify({ prompt, steps: 25, width: 768, height: 768 }),
   });
   const data = await res.json();
   if (!data.images?.[0]) throw new Error("本地 SD 無返回圖像");
-  console.log("✅ Stable Diffusion WebUI 成功生成圖片");
+  console.log("✅ Stable Diffusion 成功生成圖片");
   return Buffer.from(data.images[0], "base64");
 }
 
-/* === 💬 Hugging Face 對話模型 === */
-async function chatWithHF(message) {
-  if (!HF_TOKEN) return "⚠️ Inspiro AI 暫時無法回覆（未設定 HF_TOKEN）。";
-  const res = await fetch("https://router.huggingface.co/v1/chat/completions", {
+/* === 💬 Gemini 對話核心 === */
+async function chatWithGemini(message) {
+  if (!GEMINI_API_KEY) return "⚠️ Inspiro AI 暫時無法回覆（未設定 GEMINI_API_KEY）。";
+
+  const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`, {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${HF_TOKEN}`,
-      "Content-Type": "application/json",
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      model: "moonshotai/Kimi-K2-Instruct-0905",
-      messages: [
-        { role: "system", content: SYS_PROMPT },
-        { role: "user", content: message },
-      ],
+      contents: [{ role: "user", parts: [{ text: `${INSPIRO_PERSONA}\n\n使用者說：${message}` }] }],
     }),
   });
+
   const data = await res.json();
-  return data?.choices?.[0]?.message?.content || "⚠️ Inspiro AI 暫時無法回覆。";
+  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || "⚠️ Inspiro AI 暫時無法回覆。";
+  return text.trim();
 }
 
 /* === 🎯 判斷是否為圖像請求 === */
 function isImageRequest(text) {
-  return /(畫|圖|生成|photo|picture|art|illustration|design|city|風景|角色)/i.test(text);
+  return /(畫|圖|生成|photo|picture|art|illustration|風景|設計)/i.test(text);
 }
 
-/* === 🎨 主生成 API === */
+/* === 🎨 主 API === */
 app.post("/api/generate", async (req, res) => {
   try {
     const { message } = req.body || {};
@@ -164,6 +148,7 @@ app.post("/api/generate", async (req, res) => {
     const plan = req.session.userPlan;
     const used = req.session.usage?.imageCount || 0;
 
+    // 🎨 若為圖像請求
     if (isImageRequest(message)) {
       if (used >= LIMIT[plan]) return res.json({ ok: false, reply: "⚠️ 今日已達上限。" });
 
@@ -178,29 +163,18 @@ app.post("/api/generate", async (req, res) => {
           buffer = await drawWithHFImage(message);
           engine = "Hugging Face";
         } catch {
-          try {
-            buffer = await drawWithLocalSD(message);
-            engine = "Stable Diffusion WebUI";
-          } catch (err3) {
-            console.error("💥 三層備援全失敗：", err3.message);
-            return res.json({ ok: false, reply: "⚠️ Inspiro AI 無法生成圖片，請稍後再試。" });
-          }
+          buffer = await drawWithLocalSD(message);
+          engine = "Stable Diffusion WebUI";
         }
       }
 
       req.session.usage = { imageCount: used + 1 };
       const url = saveImage(buffer, req);
-      return res.json({
-        ok: true,
-        mode: "image",
-        engine,
-        usedCount: `${used + 1}/${LIMIT[plan]}`,
-        imageUrl: url,
-      });
+      return res.json({ ok: true, mode: "image", engine, imageUrl: url });
     }
 
-    // 💬 對話模式
-    const reply = await chatWithHF(message);
+    // 💬 若為對話請求 → Gemini 驅動
+    const reply = await chatWithGemini(message);
     res.json({ ok: true, mode: "text", reply });
 
   } catch (err) {
@@ -213,7 +187,8 @@ app.post("/api/generate", async (req, res) => {
 app.get("/health", (_req, res) => {
   res.json({
     status: "✅ Running",
-    hf_token: !!HF_TOKEN,
+    gemini: !!GEMINI_API_KEY,
+    hf: !!HF_TOKEN,
     local_sd: !!LOCAL_SD_URL,
     time: new Date().toLocaleString(),
   });
@@ -222,5 +197,5 @@ app.get("/health", (_req, res) => {
 /* === 🚀 啟動 === */
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`🚀 Inspiro AI v4.5 · 智慧多引擎模式 運行中於 port ${PORT}`);
+  console.log(`🚀 Inspiro AI v4.6 · Gemini Dialogue Core 運行中於 port ${PORT}`);
 });
